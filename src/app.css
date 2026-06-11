@@ -1,0 +1,24 @@
+@import 'tailwindcss';
+@plugin '@tailwindcss/forms';
+@plugin '@tailwindcss/typography';
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  background:
+    radial-gradient(circle at top left, rgba(15, 23, 42, 0.05), transparent 30%),
+    radial-gradient(circle at top right, rgba(2, 132, 199, 0.06), transparent 24%),
+    #f8fafc;
+  color: #0f172a;
+}
+
+a {
+  color: inherit;
+}
