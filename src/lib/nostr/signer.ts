@@ -28,8 +28,14 @@ function hasActivePasskeySession(): boolean {
   );
 }
 
+function isSignerLike(nostr: unknown): nostr is PasskeySignerShim {
+  return !!nostr && typeof nostr === 'object' &&
+    typeof (nostr as PasskeySignerShim).getPublicKey === 'function' &&
+    typeof (nostr as PasskeySignerShim).signEvent === 'function';
+}
+
 async function ensureWindowNostrBridge(): Promise<void> {
-  if (typeof window === 'undefined' || (window as any).nostr || hasActivePasskeySession()) {
+  if (typeof window === 'undefined' || hasActivePasskeySession() || isSignerLike((window as any).nostr)) {
     return;
   }
 
@@ -57,9 +63,7 @@ function getActiveSigner(): PasskeySignerShim | null {
     return null;
   }
   const nostr = (window as any).nostr;
-  return nostr && typeof nostr.getPublicKey === 'function' && typeof nostr.signEvent === 'function'
-    ? (nostr as PasskeySignerShim)
-    : null;
+  return isSignerLike(nostr) ? nostr : null;
 }
 
 export function hasActiveSigner(): boolean {
@@ -140,8 +144,7 @@ export const account = readable<NostrUser | null>(null, (set) => {
     setTimeout(async () => {
       const data = await idbkv.get<NostrUser>('noteds:loggedin');
       if (data) {
-        accountValue = data;
-        subscribers.forEach((subscriber) => subscriber(accountValue));
+        void setAccount(data.pubkey);
       }
     }, 700);
   }

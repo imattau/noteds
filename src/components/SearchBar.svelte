@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { encodeGeohash } from '$lib/nostr/geohash';
+  import { detectBrowserArea, getCachedBrowserArea } from '$lib/nostr/location';
   import type { ListingFilters } from '$lib/nostr/searchParams';
 
   let {
@@ -10,26 +10,43 @@
     onChange: (filters: ListingFilters) => void;
   } = $props();
 
-  const CATEGORY_OPTIONS = ['Electronics', 'Furniture', 'Vehicles', 'Clothing', 'Free', 'Other'];
-  const NEAR_ME_PRECISION_DEFAULT = 5;
-
   let keywordInput = $state('');
-  let selectedCategories = $state<string[]>([]);
+  let locationInput = $state('');
   let nearMeActive = $state(false);
-  let precision = $state(NEAR_ME_PRECISION_DEFAULT);
   let geoError = $state<string | null>(null);
-  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let autoDetectAttempted = $state(false);
 
   $effect(() => {
     keywordInput = filters.keyword ?? '';
-    selectedCategories = filters.categories ? [...filters.categories] : [];
+    locationInput = filters.location ?? '';
     nearMeActive = !!filters.geohashPrefix;
+  });
+
+  $effect(() => {
+    if (autoDetectAttempted) return;
+    if (filters.keyword || filters.location || filters.geohashPrefix || filters.categories?.length) return;
+
+    autoDetectAttempted = true;
+
+    const cached = getCachedBrowserArea();
+    if (cached) {
+      nearMeActive = true;
+      onChange({ geohashPrefix: cached.geohash.slice(0, 1) });
+      return;
+    }
+
+    void detectBrowserArea({ precision: 1 }).then((area) => {
+      if (!area) return;
+      nearMeActive = true;
+      onChange({ geohashPrefix: area.geohash });
+    });
   });
 
   function emitChange(overrides: Partial<ListingFilters> = {}) {
     const next: ListingFilters = {
       ...(keywordInput ? { keyword: keywordInput } : {}),
-      ...(selectedCategories.length ? { categories: selectedCategories } : {}),
+      ...(locationInput ? { location: locationInput } : {}),
+      ...(filters.categories?.length ? { categories: filters.categories } : {}),
       ...(filters.geohashPrefix ? { geohashPrefix: filters.geohashPrefix } : {}),
       ...overrides
     };
@@ -45,22 +62,27 @@
 
   function handleKeywordInput(value: string) {
     keywordInput = value;
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      emitChange({ keyword: value || undefined });
-    }, 300);
+    emitChange({ keyword: value || undefined });
   }
 
-  function toggleCategory(category: string) {
-    if (selectedCategories.includes(category)) {
-      selectedCategories = selectedCategories.filter((value) => value !== category);
-    } else {
-      selectedCategories = [...selectedCategories, category];
-    }
-    emitChange({ categories: selectedCategories.length ? selectedCategories : undefined });
+  function handleLocationInput(value: string) {
+    autoDetectAttempted = true;
+    locationInput = value;
+    nearMeActive = false;
+    geoError = null;
+    emitChange({ location: value || undefined, geohashPrefix: undefined });
+  }
+
+  function clearLocation() {
+    autoDetectAttempted = true;
+    locationInput = '';
+    nearMeActive = false;
+    geoError = null;
+    emitChange({ location: undefined, geohashPrefix: undefined });
   }
 
   function toggleNearMe() {
+    autoDetectAttempted = true;
     geoError = null;
     if (nearMeActive) {
       nearMeActive = false;
@@ -68,77 +90,71 @@
       return;
     }
 
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      geoError = 'Geolocation is not available in this browser.';
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        nearMeActive = true;
-        const prefix = encodeGeohash(position.coords.latitude, position.coords.longitude, precision);
-        emitChange({ geohashPrefix: prefix });
-      },
-      (error) => {
-        geoError = error.message || 'Failed to get your location.';
+    void detectBrowserArea({ precision: 5 }).then((area) => {
+      if (!area) {
+        geoError = 'Could not detect a rough area from this browser.';
+        return;
       }
-    );
-  }
-
-  function handlePrecisionChange(value: number) {
-    precision = value;
-    if (nearMeActive && typeof navigator !== 'undefined' && navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition((position) => {
-        const prefix = encodeGeohash(position.coords.latitude, position.coords.longitude, precision);
-        emitChange({ geohashPrefix: prefix });
-      });
-    }
+      locationInput = '';
+      nearMeActive = true;
+      emitChange({ location: undefined, geohashPrefix: area.geohash });
+    });
   }
 </script>
 
-<div class="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:flex-row sm:flex-wrap sm:items-center">
-  <input
-    type="text"
-    placeholder="Search listings…"
-    class="block w-full rounded-md border-slate-300 shadow-sm sm:max-w-xs sm:text-sm"
-    value={keywordInput}
-    oninput={(e) => handleKeywordInput((e.currentTarget as HTMLInputElement).value)}
-  />
-
-  <div class="flex flex-wrap gap-1">
-    {#each CATEGORY_OPTIONS as category (category)}
-      <label class="flex items-center gap-1 rounded-full border border-slate-200 px-2 py-1 text-xs text-slate-600">
-        <input
-          type="checkbox"
-          checked={selectedCategories.includes(category)}
-          onchange={() => toggleCategory(category)}
-        />
-        {category}
-      </label>
-    {/each}
-  </div>
-
-  <div class="flex items-center gap-2">
-    <button
-      type="button"
-      class="rounded-md border px-3 py-1 text-sm font-medium {nearMeActive ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}"
-      onclick={toggleNearMe}
-    >
-      Near me
-    </button>
-    {#if nearMeActive}
+<div class="rounded-lg border border-slate-200 bg-white p-3">
+  <div class="grid gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto] md:items-end">
+    <label class="block">
+      <span class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Search</span>
       <input
-        type="range"
-        min="3"
-        max="7"
-        value={precision}
-        oninput={(e) => handlePrecisionChange(Number((e.currentTarget as HTMLInputElement).value))}
+        type="text"
+        placeholder="Help me find..."
+        class="block w-full rounded-md border-slate-300 shadow-sm sm:text-sm"
+        value={keywordInput}
+        oninput={(e) => handleKeywordInput((e.currentTarget as HTMLInputElement).value)}
       />
-      <span class="text-xs text-slate-500">precision {precision}</span>
-    {/if}
+    </label>
+
+    <div class="block">
+      <label for="location" class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Location</label>
+      <div class="relative">
+        <input
+          id="location"
+          type="text"
+          placeholder="Suburb, city, country"
+          class="block w-full rounded-md border-slate-300 py-2 pr-9 shadow-sm sm:text-sm"
+          value={locationInput}
+          oninput={(e) => handleLocationInput((e.currentTarget as HTMLInputElement).value)}
+        />
+        {#if locationInput || nearMeActive}
+          <button
+            type="button"
+            class="absolute inset-y-0 right-0 flex items-center justify-center px-3 text-slate-400 transition hover:text-slate-700"
+            onclick={clearLocation}
+            aria-label="Clear location"
+            title="Clear location"
+          >
+            <svg class="h-4 w-4" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
+            </svg>
+          </button>
+        {/if}
+      </div>
+    </div>
+
+    <div class="flex flex-col gap-1">
+      <span class="hidden text-xs font-medium uppercase tracking-wide text-slate-500 md:block">&nbsp;</span>
+      <button
+        type="button"
+        class="rounded-md border px-4 py-2 text-sm font-medium transition-colors {nearMeActive ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}"
+        onclick={toggleNearMe}
+      >
+        Near me
+      </button>
+    </div>
   </div>
 
   {#if geoError}
-    <p class="text-xs text-red-600">{geoError}</p>
+    <p class="mt-2 text-xs text-red-600">{geoError}</p>
   {/if}
 </div>

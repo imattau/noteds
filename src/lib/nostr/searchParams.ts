@@ -1,5 +1,6 @@
 export interface ListingFilters {
   keyword?: string;
+  location?: string;
   categories?: string[];
   geohashPrefix?: string;
 }
@@ -10,6 +11,11 @@ export function parseFiltersFromSearchParams(params: URLSearchParams): ListingFi
   const keyword = params.get('q');
   if (keyword) {
     filters.keyword = keyword;
+  }
+
+  const location = params.get('loc');
+  if (location) {
+    filters.location = location;
   }
 
   const cat = params.get('cat');
@@ -33,6 +39,9 @@ export function filtersToSearchParams(filters: ListingFilters): URLSearchParams 
 
   if (filters.keyword) {
     params.set('q', filters.keyword);
+  }
+  if (filters.location) {
+    params.set('loc', filters.location);
   }
   if (filters.categories?.length) {
     params.set('cat', filters.categories.join(','));

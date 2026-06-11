@@ -1,0 +1,47 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">noteds - Nostr classifieds</title>
+  <desc id="desc">Social preview card for noteds with the logo centered on a soft gradient background.</desc>
+  <defs>
+    <linearGradient id="bg" x1="48" y1="48" x2="1120" y2="582" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8FAFC" />
+      <stop offset="0.52" stop-color="#EEF6FF" />
+      <stop offset="1" stop-color="#E8F9F7" />
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(870 240) rotate(110) scale(320 250)">
+      <stop stop-color="#2EC4C7" stop-opacity="0.28" />
+      <stop offset="1" stop-color="#2EC4C7" stop-opacity="0" />
+    </radialGradient>
+    <filter id="shadow" x="150" y="70" width="900" height="520" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#15345D" flood-opacity="0.18" />
+    </filter>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)" />
+  <rect width="1200" height="630" fill="url(#glow)" />
+
+  <g opacity="0.18" stroke="#15345D">
+    <circle cx="138" cy="96" r="2.5" fill="#15345D" />
+    <circle cx="1068" cy="120" r="2.5" fill="#15345D" />
+    <circle cx="1038" cy="518" r="2.5" fill="#15345D" />
+    <circle cx="164" cy="520" r="2.5" fill="#15345D" />
+    <path d="M138 96 C 300 40, 430 40, 600 78" />
+    <path d="M1068 120 C 920 90, 810 70, 600 78" />
+    <path d="M1038 518 C 900 560, 720 560, 600 530" />
+    <path d="M164 520 C 300 560, 460 560, 600 530" />
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="300" y="92" width="600" height="446" rx="42" fill="rgba(255,255,255,0.72)" />
+  </g>
+
+  <g transform="translate(600 257)">
+    <image href="/noteds-logo.png" x="-178" y="-178" width="356" height="356" />
+  </g>
+
+  <text x="600" y="510" text-anchor="middle" fill="#15345D" font-size="54" font-weight="700" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" letter-spacing="-0.03em">
+    noteds
+  </text>
+  <text x="600" y="556" text-anchor="middle" fill="#15345D" font-size="26" font-weight="500" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" letter-spacing="0.28em">
+    NOSTR CLASSIFIEDS
+  </text>
+</svg>

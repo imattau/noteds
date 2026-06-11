@@ -1,6 +1,6 @@
 <script lang="ts">
   import ImageUploader from './ImageUploader.svelte';
-  import { encodeGeohash } from '$lib/nostr/geohash';
+  import { detectBrowserArea } from '$lib/nostr/location';
   import type { ListingInput } from '$lib/nostr/listings';
 
   let {
@@ -71,18 +71,14 @@
 
   function useMyLocation() {
     geoError = null;
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      geoError = 'Geolocation is not available in this browser.';
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        geohash = encodeGeohash(position.coords.latitude, position.coords.longitude, 6);
-      },
-      (error) => {
-        geoError = error.message || 'Failed to get your location.';
+    void detectBrowserArea({ precision: 6 }).then((area) => {
+      if (!area) {
+        geoError = 'Could not detect a rough area from this browser.';
+        return;
       }
-    );
+      location = area.label;
+      geohash = area.geohash;
+    });
   }
 
   function buildInput(): ListingInput {
@@ -217,7 +213,7 @@
         class="rounded-md border border-slate-300 px-3 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50"
         onclick={useMyLocation}
       >
-        Use my location
+        Use my area
       </button>
       {#if geohash}
         <span class="text-xs text-slate-500">geohash: {geohash}</span>

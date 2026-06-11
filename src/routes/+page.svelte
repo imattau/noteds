@@ -9,6 +9,8 @@
   import { getActiveRelays } from '$lib/nostr/relays';
   import { filtersToSearchParams, parseFiltersFromSearchParams, type ListingFilters } from '$lib/nostr/searchParams';
 
+  const CATEGORY_OPTIONS = ['Electronics', 'Furniture', 'Vehicles', 'Clothing', 'Free', 'Other'];
+
   interface FeedItem {
     listing: ListingInput;
     pubkey: string;
@@ -52,10 +54,20 @@
     since = (since ?? Math.floor(Date.now() / 1000)) - sevenDays;
   }
 
-  function handleFiltersChange(next: ListingFilters) {
+  function handleFiltersChange(changes: ListingFilters) {
+    const next = { ...filters, ...changes };
     const params = filtersToSearchParams(next);
     const query = params.toString();
-    goto(query ? `?${query}` : '?', { replaceState: true, keepFocus: true, noScroll: true });
+    const pathname = page.url.pathname;
+    goto(query ? `${pathname}?${query}` : pathname, { replaceState: true, keepFocus: true, noScroll: true });
+  }
+
+  function toggleCategory(category: string) {
+    const categories = filters.categories ?? [];
+    const nextCategories = categories.includes(category)
+      ? categories.filter((value) => value !== category)
+      : [...categories, category];
+    handleFiltersChange({ categories: nextCategories.length ? nextCategories : undefined });
   }
 
   let visibleItems = $derived(
@@ -66,8 +78,18 @@
         return (
           item.listing.title.toLowerCase().includes(needle) ||
           item.listing.summary.toLowerCase().includes(needle) ||
-          item.listing.content.toLowerCase().includes(needle)
+          item.listing.content.toLowerCase().includes(needle) ||
+          (item.listing.location ?? '').toLowerCase().includes(needle)
         );
+      })
+      .filter((item) => {
+        if (!filters.location) return true;
+        const needle = filters.location.toLowerCase();
+        return (item.listing.location ?? '').toLowerCase().includes(needle);
+      })
+      .filter((item) => {
+        if (!filters.categories?.length) return true;
+        return filters.categories.every((category) => item.listing.categories.includes(category));
       })
       .sort((a, b) => b.created_at - a.created_at)
   );
@@ -77,6 +99,18 @@
 
 <div class="mt-4">
   <SearchBar {filters} onChange={handleFiltersChange} />
+</div>
+
+<div class="mt-4 flex flex-wrap gap-2">
+  {#each CATEGORY_OPTIONS as category (category)}
+    <button
+      type="button"
+      class="rounded-full border px-3 py-1 text-xs font-medium transition-colors {filters.categories?.includes(category) ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}"
+      onclick={() => toggleCategory(category)}
+    >
+      {category}
+    </button>
+  {/each}
 </div>
 
 <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

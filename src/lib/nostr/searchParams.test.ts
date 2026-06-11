@@ -7,9 +7,10 @@ describe('parseFiltersFromSearchParams', () => {
   });
 
   it('parses keyword, categories, and geohash prefix', () => {
-    const params = new URLSearchParams('q=bike&cat=bicycles,furniture&geo=9v6kp');
+    const params = new URLSearchParams('q=bike&loc=melbourne&cat=bicycles,furniture&geo=9v6kp');
     expect(parseFiltersFromSearchParams(params)).toEqual({
       keyword: 'bike',
+      location: 'melbourne',
       categories: ['bicycles', 'furniture'],
       geohashPrefix: '9v6kp'
     });
@@ -34,11 +35,13 @@ describe('filtersToSearchParams', () => {
   it('serializes a full filter set', () => {
     const filters: ListingFilters = {
       keyword: 'bike',
+      location: 'melbourne',
       categories: ['bicycles', 'furniture'],
       geohashPrefix: '9v6kp'
     };
     const params = filtersToSearchParams(filters);
     expect(params.get('q')).toBe('bike');
+    expect(params.get('loc')).toBe('melbourne');
     expect(params.get('cat')).toBe('bicycles,furniture');
     expect(params.get('geo')).toBe('9v6kp');
   });
@@ -59,6 +62,7 @@ describe('round trip', () => {
   it('round-trips a full filter set', () => {
     const filters: ListingFilters = {
       keyword: 'bike',
+      location: 'melbourne',
       categories: ['bicycles', 'furniture'],
       geohashPrefix: '9v6kp'
     };

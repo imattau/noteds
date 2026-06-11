@@ -1,16 +1,21 @@
 <script lang="ts">
   import { nip19 } from 'nostr-tools';
   import { completePasskeySession, logout, account } from '$lib/nostr/signer';
-  import { importPasskeyIdentityFromNsec, registerPasskeyIdentity } from '$lib/nostr/passkeyIdentity';
+  import {
+    hasStoredPasskeyIdentity,
+    importPasskeyIdentityFromNsec,
+    registerPasskeyIdentity,
+    unlockPasskeyIdentity
+  } from '$lib/nostr/passkeyIdentity';
   import { sanitizeRelayUrl } from '$lib/nostr/security';
   import { DEFAULT_RELAYS, getActiveRelays, getCustomRelays, setCustomRelays } from '$lib/nostr/relays';
 
   const DEFAULT_BLOSSOM_SERVER = 'https://blossom.primal.net';
 
   let authError = $state<string | null>(null);
-  let registering = $state(false);
-  let importing = $state(false);
   let nsecInput = $state('');
+  let hasPasskey = $state(hasStoredPasskeyIdentity());
+  let passkeyBusy = $state(false);
 
   let relays = $state<string[]>(getCustomRelays());
   let newRelayUrl = $state('');
@@ -33,30 +38,27 @@
     }
   }
 
-  async function handleRegister() {
+  async function handlePasskeySubmit() {
     authError = null;
-    registering = true;
+    passkeyBusy = true;
     try {
-      const { secretKey, pubkey } = await registerPasskeyIdentity();
-      await completePasskeySession(secretKey, pubkey);
-    } catch (e) {
-      authError = e instanceof Error ? e.message : 'Failed to register passkey identity.';
-    } finally {
-      registering = false;
-    }
-  }
+      const trimmed = nsecInput.trim();
+      const hasInput = trimmed.length > 0;
+      const { secretKey, pubkey } = hasInput
+        ? await importPasskeyIdentityFromNsec(trimmed)
+        : hasPasskey
+          ? await unlockPasskeyIdentity()
+          : await registerPasskeyIdentity();
 
-  async function handleImport() {
-    authError = null;
-    importing = true;
-    try {
-      const { secretKey, pubkey } = await importPasskeyIdentityFromNsec(nsecInput);
       await completePasskeySession(secretKey, pubkey);
-      nsecInput = '';
+      if (hasInput) {
+        nsecInput = '';
+      }
+      hasPasskey = hasStoredPasskeyIdentity();
     } catch (e) {
-      authError = e instanceof Error ? e.message : 'Failed to import identity.';
+      authError = e instanceof Error ? e.message : 'Failed to prepare passkey identity.';
     } finally {
-      importing = false;
+      passkeyBusy = false;
     }
   }
 
@@ -98,7 +100,7 @@
         <img src={$account.metadata.picture} alt="" class="h-10 w-10 rounded-full object-cover" />
       {/if}
       <div>
-        <p class="text-sm font-medium text-slate-900">{$account.metadata?.name || $account.metadata?.display_name || 'Anonymous'}</p>
+        <p class="text-sm font-medium text-slate-900">{$account.metadata?.name || $account.metadata?.display_name || $account.npub}</p>
         <p class="text-xs text-slate-500">{nip19.npubEncode($account.pubkey)}</p>
       </div>
     </div>
@@ -112,31 +114,33 @@
   {:else}
     <p class="mt-2 text-sm text-slate-500">No account connected on this device.</p>
     <div class="mt-3 flex flex-col gap-3">
+      <label class="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500" for="nsec-input">
+        Optional existing nsec
+      </label>
+      <input
+        id="nsec-input"
+        type="text"
+        placeholder="nsec1… or hex secret key"
+        class="block w-full rounded-md border-slate-300 shadow-sm sm:max-w-sm sm:text-sm"
+        bind:value={nsecInput}
+      />
       <button
         type="button"
         class="self-start rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-        onclick={handleRegister}
-        disabled={registering}
+        onclick={handlePasskeySubmit}
+        disabled={passkeyBusy}
       >
-        {registering ? 'Registering…' : 'Register new passkey identity'}
+        {passkeyBusy
+          ? 'Working…'
+          : nsecInput.trim()
+            ? 'Create passkey from nsec'
+            : hasPasskey
+              ? 'Unlock passkey'
+              : 'Create new passkey'}
       </button>
-
-      <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <input
-          type="text"
-          placeholder="nsec1… or hex secret key"
-          class="block w-full rounded-md border-slate-300 shadow-sm sm:max-w-sm sm:text-sm"
-          bind:value={nsecInput}
-        />
-        <button
-          type="button"
-          class="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-          onclick={handleImport}
-          disabled={importing}
-        >
-          {importing ? 'Importing…' : 'Import from nsec'}
-        </button>
-      </div>
+      <p class="text-xs text-slate-500">
+        Leave the key empty to create a new Nostr keypair, or paste an existing `nsec` to move it into a passkey on this device.
+      </p>
     </div>
   {/if}
 
