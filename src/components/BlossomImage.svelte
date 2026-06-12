@@ -17,6 +17,7 @@
 
   let requestId = 0;
   let controllers: AbortController[] = [];
+  let loadedSourcesKey: string | null = null;
 
   function uniqueSources(values: string[]): string[] {
     return [...new Set(values.filter((value): value is string => typeof value === 'string' && value.trim().length > 0))];
@@ -86,6 +87,12 @@
 
   $effect(() => {
     const candidateUrls = uniqueSources(sources);
+    const sourcesKey = candidateUrls.join('\n');
+    if (sourcesKey === loadedSourcesKey) {
+      return undefined;
+    }
+    loadedSourcesKey = sourcesKey;
+
     const token = ++requestId;
     void loadBestImage(candidateUrls, token);
 
