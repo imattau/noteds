@@ -4,6 +4,7 @@
   import AuthGate from '$components/AuthGate.svelte';
   import ListingForm from '$components/ListingForm.svelte';
   import { deleteDraft, getDraft, saveDraft } from '$lib/nostr/drafts';
+  import { upsertOwnedListingId } from '$lib/nostr/ownedListings';
   import { buildListingEvent, type ListingInput } from '$lib/nostr/listings';
   import { getActiveRelays } from '$lib/nostr/relays';
   import { relayPool, signer } from '$lib/nostr/signer';
@@ -33,6 +34,9 @@
       const template = buildListingEvent(input, false);
       const event = await signer.signEvent(template);
       await relayPool.publish(getActiveRelays(), event);
+      void upsertOwnedListingId(event.pubkey, input.id).catch((indexError) => {
+        console.error('Failed to update owned listings index after publish', indexError);
+      });
       await deleteDraft(input.id);
       await goto('/my-listings');
     } catch (e) {

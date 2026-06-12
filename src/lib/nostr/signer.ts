@@ -14,6 +14,7 @@ let passkeySignerShim: PasskeySignerShim | null = null;
 let restoredPasskeyPubkey: string | null = null;
 let nostrBridgePromise: Promise<void> | null = null;
 let setAccount: (pubkey: string | null) => Promise<void> = async () => {};
+let hydratedPreferencesPubkey: string | null = null;
 
 function hasActivePasskeySession(): boolean {
   if (passkeySignerShim) {
@@ -112,6 +113,13 @@ async function setAccountFromPubkey(pubkey: string | null): Promise<void> {
   }
   accountValue = acct;
   subscribers.forEach((subscriber) => subscriber(accountValue));
+
+  if (typeof window !== 'undefined' && hydratedPreferencesPubkey !== pubkey) {
+    void import('./preferences').then(async ({ hydratePreferencesFromNostr }) => {
+      await hydratePreferencesFromNostr(pubkey);
+      hydratedPreferencesPubkey = pubkey;
+    });
+  }
 }
 
 let accountValue: NostrUser | null = null;
@@ -135,6 +143,12 @@ export const account = readable<NostrUser | null>(null, (set) => {
       await idbkv.set('noteds:loggedin', acct);
     }
     subscribers.forEach((subscriber) => subscriber(accountValue));
+    if (typeof window !== 'undefined' && hydratedPreferencesPubkey !== pubkey) {
+      void import('./preferences').then(async ({ hydratePreferencesFromNostr }) => {
+        await hydratePreferencesFromNostr(pubkey);
+        hydratedPreferencesPubkey = pubkey;
+      });
+    }
   };
 
   if (restoredPasskeyPubkey) {
@@ -193,6 +207,7 @@ export async function logout(): Promise<void> {
   sessionStorage.removeItem('noteds:passkey_session_nsec');
   sessionStorage.removeItem('noteds:passkey_session_pubkey');
   passkeySignerShim = null;
+  hydratedPreferencesPubkey = null;
   if (isPasskeyShim((window as any).nostr)) {
     delete (window as any).nostr;
   }

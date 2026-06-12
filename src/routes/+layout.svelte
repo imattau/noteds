@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { base } from '$app/paths';
+  import { onMount } from 'svelte';
   import '../app.css';
   import { completePasskeySession, account, signer } from '$lib/nostr/signer';
   import { unlockPasskeyIdentity } from '$lib/nostr/passkeyIdentity';
@@ -8,6 +10,16 @@
   let authError = $state<string | null>(null);
   let connecting = $state(false);
   let passkeyLoading = $state(false);
+
+  onMount(() => {
+    if (!('serviceWorker' in navigator) || !import.meta.env.PROD) {
+      return;
+    }
+
+    void navigator.serviceWorker.register(`${base}/service-worker.js`).catch((error) => {
+      console.error('Failed to register service worker', error);
+    });
+  });
 
   function getAccountInitials(): string {
     const label = $account?.metadata?.display_name || $account?.metadata?.name || $account?.npub || '';
@@ -54,27 +66,30 @@
 
 <svelte:head>
   <title>noteds</title>
-  <link rel="icon" href="/noteds-logo.png" />
-  <link rel="apple-touch-icon" href="/noteds-logo.png" />
+  <link rel="manifest" href={`${base}/manifest.webmanifest`} />
+  <link rel="icon" href={`${base}/noteds-icon.svg`} />
+  <link rel="apple-touch-icon" href={`${base}/noteds-logo.png`} />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="noteds" />
   <meta name="theme-color" content="#15345d" />
   <meta name="description" content="Nostr classifieds for listings, drafts, and direct messages." />
   <meta property="og:type" content="website" />
   <meta property="og:title" content="noteds" />
   <meta property="og:description" content="Nostr classifieds for listings, drafts, and direct messages." />
-  <meta property="og:image" content="/noteds-og.svg" />
+  <meta property="og:image" content={`${base}/noteds-og.svg`} />
   <meta property="og:image:alt" content="noteds - Nostr classifieds" />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="noteds" />
   <meta name="twitter:description" content="Nostr classifieds for listings, drafts, and direct messages." />
-  <meta name="twitter:image" content="/noteds-og.svg" />
+  <meta name="twitter:image" content={`${base}/noteds-og.svg`} />
 </svelte:head>
 
 <div class="min-h-screen bg-slate-50 text-slate-900">
   <header class="border-b border-slate-200 bg-white/90 backdrop-blur">
     <div class="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
-      <a href="/" class="flex items-center gap-3">
+      <a href={`${base}/`} class="flex items-center gap-3">
         <img
-          src="/noteds-logo.png"
+          src={`${base}/noteds-logo.png`}
           alt="noteds"
           class="h-11 w-11 rounded-xl object-cover shadow-sm ring-1 ring-slate-200"
         />
@@ -85,27 +100,39 @@
       </a>
 
       <div class="flex shrink-0 flex-col items-end gap-2">
-        {#if $account}
-          <a
-            href="/settings"
-            class="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1 shadow-sm transition hover:border-slate-300 hover:shadow"
-            aria-label="Open account settings"
-            title={$account.metadata?.name || $account.metadata?.display_name || 'Account settings'}
-          >
-            {#if $account.metadata?.picture}
-              <img
-                src={$account.metadata.picture}
-                alt=""
-                class="h-9 w-9 rounded-full object-cover ring-1 ring-slate-200"
-              />
-            {:else}
-              <span class="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold uppercase tracking-[0.12em] text-white">
-                {getAccountInitials()}
-              </span>
-            {/if}
-          </a>
-        {:else}
-          <div class="flex flex-wrap items-center justify-end gap-2">
+        <div class="flex flex-wrap items-center justify-end gap-2">
+          {#if $account}
+            <a
+              href="/my-listings"
+              class="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+            >
+              My Listings
+            </a>
+            <a
+              href="/create"
+              class="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+            >
+              Create Listing
+            </a>
+            <a
+              href="/settings"
+              class="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1 shadow-sm transition hover:border-slate-300 hover:shadow"
+              aria-label="Open account settings"
+              title={$account.metadata?.name || $account.metadata?.display_name || 'Account settings'}
+            >
+              {#if $account.metadata?.picture}
+                <img
+                  src={$account.metadata.picture}
+                  alt=""
+                  class="h-9 w-9 rounded-full object-cover ring-1 ring-slate-200"
+                />
+              {:else}
+                <span class="flex h-9 w-9 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold uppercase tracking-[0.12em] text-white">
+                  {getAccountInitials()}
+                </span>
+              {/if}
+            </a>
+          {:else}
             <a
               href="/settings"
               class="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
@@ -128,15 +155,15 @@
             >
               {passkeyLoading ? 'Opening…' : 'Use Passkey'}
             </button>
-          </div>
-          {#if connecting}
-            <p class="max-w-sm text-right text-xs text-slate-500">
-              Waiting for a NIP-07 extension or window.nostr.js bridge.
-            </p>
           {/if}
-          {#if authError}
-            <p class="max-w-sm text-right text-xs text-rose-600">{authError}</p>
-          {/if}
+        </div>
+        {#if connecting}
+          <p class="max-w-sm text-right text-xs text-slate-500">
+            Waiting for a NIP-07 extension or window.nostr.js bridge.
+          </p>
+        {/if}
+        {#if authError}
+          <p class="max-w-sm text-right text-xs text-rose-600">{authError}</p>
         {/if}
       </div>
     </div>

@@ -2,6 +2,8 @@
   import { loadNostrUser, type NostrUser } from '$lib/nostr/metadata';
   import { fade, scale } from 'svelte/transition';
   import AuthGate from '$components/AuthGate.svelte';
+  import BlossomImage from '$components/BlossomImage.svelte';
+  import { getDeletedEventIds } from '$lib/nostr/deletions';
   import { sendDirectMessage } from '$lib/nostr/dm';
   import { parseListingEvent, type ListingInput } from '$lib/nostr/listings';
   import { getActiveRelays } from '$lib/nostr/relays';
@@ -10,6 +12,9 @@
   let { data }: { data: { kind: number; pubkey: string; identifier: string } } = $props();
 
   let listing = $state<ListingInput | null>(null);
+  let eventId = $state<string | null>(null);
+  let deleted = $state(false);
+  let deletedEventIds = $state<string[]>([]);
   let seller = $state<NostrUser | null>(null);
   let showContactModal = $state(false);
   let messageText = $state('');
@@ -64,7 +69,19 @@
       .subscribe((response: any) => {
         if (response === 'EOSE' || cancelled) return;
         listing = parseListingEvent(response);
+        eventId = response.id;
+        deleted = deletedEventIds.includes(response.id);
       });
+
+    const deleteSubscription = relayPool.subscription(getActiveRelays(), { kinds: [5] }).subscribe((response: any) => {
+      if (response === 'EOSE' || cancelled) return;
+      const deletedIds = getDeletedEventIds(response);
+      if (deletedIds.length === 0) return;
+      deletedEventIds = [...new Set([...deletedEventIds, ...deletedIds])];
+      if (eventId && deletedIds.includes(eventId)) {
+        deleted = true;
+      }
+    });
 
     loadNostrUser(data.pubkey).then((user) => {
       if (!cancelled) seller = user;
@@ -73,16 +90,25 @@
     return () => {
       cancelled = true;
       subscription.unsubscribe();
+      deleteSubscription.unsubscribe();
     };
   });
 </script>
 
-{#if listing}
+{#if deleted}
+  <div class="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-600">
+    This listing has been deleted by the seller.
+  </div>
+{:else if listing}
   <div class="flex flex-col gap-4">
     {#if listing.images.length > 0}
       <div class="flex gap-2 overflow-x-auto sm:grid sm:grid-cols-3 sm:overflow-visible">
-        {#each listing.images as image (image)}
-          <img src={image} alt={listing.title} class="h-48 w-64 flex-shrink-0 rounded-lg object-cover sm:h-40 sm:w-full" />
+        {#each listing.images as image (image.url)}
+          <BlossomImage
+            sources={image.sources}
+            alt={listing.title}
+            class="h-48 w-64 flex-shrink-0 rounded-lg object-cover sm:h-40 sm:w-full"
+          />
         {/each}
       </div>
     {/if}
@@ -98,6 +124,16 @@
       <div class="flex flex-wrap gap-1">
         {#each listing.categories as category (category)}
           <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{category}</span>
+        {/each}
+      </div>
+    {/if}
+
+    {#if (listing.subcategories?.length ?? 0) > 0}
+      <div class="flex flex-wrap gap-1">
+        {#each listing.subcategories as subcategory (subcategory.parent + ':' + subcategory.value)}
+          <span class="rounded-full bg-slate-50 px-2 py-0.5 text-xs text-slate-500">
+            {subcategory.parent}: {subcategory.value}
+          </span>
         {/each}
       </div>
     {/if}

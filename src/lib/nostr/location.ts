@@ -16,6 +16,18 @@ export interface BrowserArea {
   detectedAt: number;
 }
 
+export interface LocationSuggestion {
+  label: string;
+  geohash: string;
+  latitude: number;
+  longitude: number;
+  country?: string;
+  state?: string;
+  city?: string;
+  suburb?: string;
+  postcode?: string;
+}
+
 interface NominatimGeocodeJson {
   features?: Array<{
     properties?: {
@@ -39,6 +51,22 @@ interface NominatimGeocodeJson {
       };
     };
   }>;
+}
+
+interface NominatimSearchJsonItem {
+  lat?: string;
+  lon?: string;
+  display_name?: string;
+  address?: {
+    country?: string;
+    state?: string;
+    city?: string;
+    town?: string;
+    village?: string;
+    suburb?: string;
+    neighbourhood?: string;
+    postcode?: string;
+  };
 }
 
 function isBrowser(): boolean {
@@ -143,6 +171,64 @@ export async function reverseGeocodeNominatim(
 
   const json = (await response.json()) as NominatimGeocodeJson;
   return parseNominatimGeocodeJson(json);
+}
+
+function parseNominatimSearchItem(item: NominatimSearchJsonItem, precision = 6): LocationSuggestion | null {
+  const latitude = Number(item.lat);
+  const longitude = Number(item.lon);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+  const address = item.address ?? {};
+  const suburb = address.suburb ?? address.neighbourhood ?? address.town ?? address.village;
+  const city = address.city ?? address.town ?? address.village;
+  const state = address.state;
+  const country = address.country;
+  const label = item.display_name?.trim() || formatAreaLabel({ suburb, city, state, country });
+
+  if (!label) return null;
+
+  return {
+    label,
+    latitude,
+    longitude,
+    geohash: encodeGeohash(latitude, longitude, precision),
+    country,
+    state,
+    city,
+    suburb,
+    postcode: address.postcode
+  };
+}
+
+export async function searchNominatimLocations(
+  query: string,
+  options: { limit?: number; precision?: number; fetchImpl?: typeof fetch; signal?: AbortSignal } = {}
+): Promise<LocationSuggestion[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+
+  const url = new URL('https://nominatim.openstreetmap.org/search');
+  url.searchParams.set('format', 'jsonv2');
+  url.searchParams.set('q', trimmed);
+  url.searchParams.set('limit', String(options.limit ?? 5));
+  url.searchParams.set('addressdetails', '1');
+  url.searchParams.set('accept-language', typeof navigator !== 'undefined' ? navigator.language : 'en');
+
+  const response = await (options.fetchImpl ?? fetch)(url.toString(), {
+    headers: {
+      Accept: 'application/json'
+    },
+    signal: options.signal
+  });
+
+  if (!response.ok) {
+    return [];
+  }
+
+  const json = (await response.json()) as NominatimSearchJsonItem[];
+  return json
+    .map((item) => parseNominatimSearchItem(item, options.precision ?? 6))
+    .filter((value): value is LocationSuggestion => value !== null);
 }
 
 export async function detectBrowserArea(

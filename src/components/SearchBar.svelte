@@ -1,20 +1,30 @@
 <script lang="ts">
-  import { detectBrowserArea, getCachedBrowserArea } from '$lib/nostr/location';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/state';
+  import { detectBrowserArea, getCachedBrowserArea, searchNominatimLocations, type LocationSuggestion } from '$lib/nostr/location';
   import type { ListingFilters } from '$lib/nostr/searchParams';
 
   let {
     filters,
-    onChange
+    onChange,
+    allowAutoDetect = false
   }: {
     filters: ListingFilters;
     onChange: (filters: ListingFilters) => void;
+    allowAutoDetect?: boolean;
   } = $props();
 
   let keywordInput = $state('');
   let locationInput = $state('');
   let nearMeActive = $state(false);
   let geoError = $state<string | null>(null);
+  let locationSuggestions = $state<LocationSuggestion[]>([]);
+  let locationSearchError = $state<string | null>(null);
+  let searchingLocations = $state(false);
   let autoDetectAttempted = $state(false);
+  let locationSearchTimer: ReturnType<typeof setTimeout> | null = null;
+  let locationSearchRequestId = 0;
+  let locationSearchAbortController: AbortController | null = null;
 
   $effect(() => {
     keywordInput = filters.keyword ?? '';
@@ -23,6 +33,62 @@
   });
 
   $effect(() => {
+    if (locationSearchTimer) {
+      clearTimeout(locationSearchTimer);
+      locationSearchTimer = null;
+    }
+    if (locationSearchAbortController) {
+      locationSearchAbortController.abort();
+      locationSearchAbortController = null;
+    }
+
+    const query = locationInput.trim();
+    if (!query) {
+      locationSuggestions = [];
+      locationSearchError = null;
+      searchingLocations = false;
+      return;
+    }
+
+    const requestId = ++locationSearchRequestId;
+    locationSuggestions = [];
+    locationSearchError = null;
+    searchingLocations = true;
+    const controller = new AbortController();
+    locationSearchAbortController = controller;
+    locationSearchTimer = setTimeout(() => {
+      void searchNominatimLocations(query, { limit: 5, signal: controller.signal }).then(
+        (results) => {
+          if (requestId !== locationSearchRequestId) return;
+          locationSuggestions = results;
+          locationSearchError = results.length === 0 ? 'No matching places found.' : null;
+        },
+        () => {
+          if (requestId !== locationSearchRequestId) return;
+          locationSuggestions = [];
+          locationSearchError = 'Could not search for places right now.';
+        }
+      ).finally(() => {
+        if (requestId === locationSearchRequestId) {
+          searchingLocations = false;
+        }
+      });
+    }, 300);
+
+    return () => {
+      if (locationSearchTimer) {
+        clearTimeout(locationSearchTimer);
+        locationSearchTimer = null;
+      }
+      if (locationSearchAbortController) {
+        locationSearchAbortController.abort();
+        locationSearchAbortController = null;
+      }
+    };
+  });
+
+  $effect(() => {
+    if (!allowAutoDetect) return;
     if (autoDetectAttempted) return;
     if (filters.keyword || filters.location || filters.geohashPrefix || filters.categories?.length) return;
 
@@ -70,7 +136,18 @@
     locationInput = value;
     nearMeActive = false;
     geoError = null;
+    locationSearchError = null;
     emitChange({ location: value || undefined, geohashPrefix: undefined });
+  }
+
+  function selectLocationSuggestion(suggestion: LocationSuggestion) {
+    autoDetectAttempted = true;
+    locationInput = suggestion.label;
+    nearMeActive = false;
+    geoError = null;
+    locationSearchError = null;
+    locationSuggestions = [];
+    emitChange({ location: suggestion.label, geohashPrefix: suggestion.geohash });
   }
 
   function clearLocation() {
@@ -78,7 +155,19 @@
     locationInput = '';
     nearMeActive = false;
     geoError = null;
+    locationSearchError = null;
+    locationSuggestions = [];
     emitChange({ location: undefined, geohashPrefix: undefined });
+
+    const params = new URLSearchParams(page.url.searchParams);
+    params.delete('loc');
+    params.delete('geo');
+    const query = params.toString();
+    void goto(query ? `${page.url.pathname}?${query}` : page.url.pathname, {
+      replaceState: true,
+      keepFocus: true,
+      noScroll: true
+    });
   }
 
   function toggleNearMe() {
@@ -97,6 +186,8 @@
       }
       locationInput = '';
       nearMeActive = true;
+      locationSuggestions = [];
+      locationSearchError = null;
       emitChange({ location: undefined, geohashPrefix: area.geohash });
     });
   }
@@ -138,6 +229,27 @@
               <path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
             </svg>
           </button>
+        {/if}
+        {#if searchingLocations}
+          <p class="absolute left-0 top-full z-20 mt-2 text-xs text-slate-500">Searching locations…</p>
+        {:else if locationSearchError}
+          <p class="absolute left-0 top-full z-20 mt-2 text-xs text-red-600">{locationSearchError}</p>
+        {/if}
+        {#if locationSuggestions.length > 0}
+        <ul class="absolute left-0 top-full z-20 mt-2 max-h-64 w-full overflow-auto rounded-md border border-slate-200 bg-white shadow-lg">
+          {#each locationSuggestions as suggestion (suggestion.label)}
+            <li>
+              <button
+                type="button"
+                class="w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                onclick={() => selectLocationSuggestion(suggestion)}
+              >
+                <span class="block font-medium text-slate-900">{suggestion.label}</span>
+                <span class="block text-xs text-slate-500">{suggestion.country || suggestion.state || suggestion.city || suggestion.postcode}</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
         {/if}
       </div>
     </div>

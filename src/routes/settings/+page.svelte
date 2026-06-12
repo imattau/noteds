@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { nip19 } from 'nostr-tools';
   import { completePasskeySession, logout, account } from '$lib/nostr/signer';
   import {
@@ -8,9 +9,15 @@
     unlockPasskeyIdentity
   } from '$lib/nostr/passkeyIdentity';
   import { sanitizeRelayUrl } from '$lib/nostr/security';
+  import {
+    DEFAULT_BLOSSOM_SERVERS,
+    getActiveBlossomServers,
+    getCustomBlossomServers,
+    hydratePreferencesFromNostr,
+    sanitizeBlossomServerUrl,
+    setCustomBlossomServers
+  } from '$lib/nostr/preferences';
   import { DEFAULT_RELAYS, getActiveRelays, getCustomRelays, setCustomRelays } from '$lib/nostr/relays';
-
-  const DEFAULT_BLOSSOM_SERVER = 'https://blossom.primal.net';
 
   let authError = $state<string | null>(null);
   let nsecInput = $state('');
@@ -21,21 +28,13 @@
   let newRelayUrl = $state('');
   let relayError = $state<string | null>(null);
 
-  let blossomServer = $state('');
+  let blossomServers = $state<string[]>(getCustomBlossomServers());
+  let newBlossomServer = $state('');
+  let blossomError = $state<string | null>(null);
 
-  $effect(() => {
-    if (typeof window !== 'undefined') {
-      blossomServer = localStorage.getItem('noteds:blossom-server') ?? '';
-    }
-  });
-
-  function saveBlossomServer() {
-    if (typeof window === 'undefined') return;
-    if (blossomServer.trim()) {
-      localStorage.setItem('noteds:blossom-server', blossomServer.trim());
-    } else {
-      localStorage.removeItem('noteds:blossom-server');
-    }
+  function refreshPreferences() {
+    relays = getCustomRelays();
+    blossomServers = getCustomBlossomServers();
   }
 
   async function handlePasskeySubmit() {
@@ -87,6 +86,46 @@
     relays = relays.filter((relay) => relay !== url);
     setCustomRelays(relays);
   }
+
+  function addBlossomServer() {
+    blossomError = null;
+    const sanitized = sanitizeBlossomServerUrl(newBlossomServer);
+    if (!sanitized) {
+      blossomError = 'Enter a valid https:// Blossom server URL.';
+      return;
+    }
+    if (blossomServers.includes(sanitized)) {
+      blossomError = 'That server is already in your list.';
+      return;
+    }
+    blossomServers = [...blossomServers, sanitized];
+    setCustomBlossomServers(blossomServers);
+    newBlossomServer = '';
+  }
+
+  function removeBlossomServer(url: string) {
+    blossomServers = blossomServers.filter((server) => server !== url);
+    setCustomBlossomServers(blossomServers);
+  }
+
+  async function refreshFromNostrIfNeeded(pubkey: string) {
+    if (!pubkey) return;
+    await hydratePreferencesFromNostr(pubkey);
+    refreshPreferences();
+  }
+
+  onMount(() => {
+    refreshPreferences();
+    const unsub = account.subscribe((acc) => {
+      if (acc?.pubkey) {
+        void refreshFromNostrIfNeeded(acc.pubkey);
+      }
+    });
+
+    return () => {
+      unsub();
+    };
+  });
 </script>
 
 <h1 class="text-2xl font-semibold">Settings</h1>
@@ -151,7 +190,7 @@
 
 <section class="mt-4 rounded-lg border border-slate-200 bg-white p-4">
   <h2 class="text-lg font-semibold">Relays</h2>
-  <p class="mt-1 text-xs text-slate-500">Active relays (defaults + custom):</p>
+  <p class="mt-1 text-xs text-slate-500">Active relays (your Nostr list when available, otherwise local defaults + custom):</p>
   <ul class="mt-1 flex flex-col gap-1 text-sm text-slate-700">
     {#each getActiveRelays() as relay (relay)}
       <li class="flex items-center justify-between rounded-md border border-slate-100 px-2 py-1">
@@ -187,13 +226,37 @@
 
 <section class="mt-4 rounded-lg border border-slate-200 bg-white p-4">
   <h2 class="text-lg font-semibold">Image uploads (Blossom)</h2>
-  <label for="blossom-server" class="mt-2 block text-sm font-medium text-slate-700">Server URL</label>
-  <input
-    id="blossom-server"
-    type="text"
-    placeholder={DEFAULT_BLOSSOM_SERVER}
-    class="mt-1 block w-full rounded-md border-slate-300 shadow-sm sm:max-w-sm sm:text-sm"
-    bind:value={blossomServer}
-    onblur={saveBlossomServer}
-  />
+  <p class="mt-1 text-xs text-slate-500">Active upload servers (your Nostr preference when available, otherwise local defaults + custom):</p>
+  <ul class="mt-1 flex flex-col gap-1 text-sm text-slate-700">
+    {#each getActiveBlossomServers() as server (server)}
+      <li class="flex items-center justify-between rounded-md border border-slate-100 px-2 py-1">
+        <span class="truncate">{server}</span>
+        {#if !DEFAULT_BLOSSOM_SERVERS.includes(server)}
+          <button type="button" class="text-xs text-red-600 hover:underline" onclick={() => removeBlossomServer(server)}>
+            Remove
+          </button>
+        {/if}
+      </li>
+    {/each}
+  </ul>
+
+  <div class="mt-3 flex flex-col gap-2 sm:flex-row">
+    <input
+      id="blossom-server"
+      type="text"
+      placeholder={DEFAULT_BLOSSOM_SERVERS[0]}
+      class="block w-full rounded-md border-slate-300 shadow-sm sm:max-w-sm sm:text-sm"
+      bind:value={newBlossomServer}
+    />
+    <button
+      type="button"
+      class="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+      onclick={addBlossomServer}
+    >
+      Add server
+    </button>
+  </div>
+  {#if blossomError}
+    <p class="mt-2 text-sm text-red-600">{blossomError}</p>
+  {/if}
 </section>

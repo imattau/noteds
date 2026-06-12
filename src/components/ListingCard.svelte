@@ -31,7 +31,7 @@
   class="flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition hover:shadow-md"
 >
   {#if listing.images.length > 0}
-    <img src={listing.images[0]} alt={listing.title} class="h-40 w-full object-cover sm:h-48" />
+    <img src={listing.images[0].url} alt={listing.title} class="h-40 w-full object-cover sm:h-48" />
   {:else}
     <div class="flex h-40 w-full items-center justify-center bg-slate-100 text-slate-400 sm:h-48">
       No image
@@ -45,14 +45,24 @@
       <p class="text-xs text-slate-500">{listing.location}</p>
     {/if}
 
-    {#if listing.categories.length > 0}
-      <div class="mt-1 flex flex-wrap gap-1">
-        {#each listing.categories as category (category)}
-          <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{category}</span>
-        {/each}
-      </div>
-    {/if}
+  {#if listing.categories.length > 0}
+    <div class="mt-1 flex flex-wrap gap-1">
+      {#each listing.categories as category (category)}
+        <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{category}</span>
+      {/each}
+    </div>
+  {/if}
 
-    <p class="mt-auto pt-2 text-xs text-slate-400">{relativeTime(created_at)}</p>
-  </div>
+  {#if (listing.subcategories?.length ?? 0) > 0}
+    <div class="mt-1 flex flex-wrap gap-1">
+      {#each listing.subcategories as subcategory (subcategory.parent + ':' + subcategory.value)}
+        <span class="rounded-full bg-slate-50 px-2 py-0.5 text-xs text-slate-500">
+          {subcategory.parent}: {subcategory.value}
+        </span>
+      {/each}
+    </div>
+  {/if}
+
+  <p class="mt-auto pt-2 text-xs text-slate-400">{relativeTime(created_at)}</p>
+</div>
 </a>

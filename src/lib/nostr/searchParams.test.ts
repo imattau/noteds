@@ -6,12 +6,13 @@ describe('parseFiltersFromSearchParams', () => {
     expect(parseFiltersFromSearchParams(new URLSearchParams())).toEqual({});
   });
 
-  it('parses keyword, categories, and geohash prefix', () => {
-    const params = new URLSearchParams('q=bike&loc=melbourne&cat=bicycles,furniture&geo=9v6kp');
+  it('parses keyword, categories, subcategories, and geohash prefix', () => {
+    const params = new URLSearchParams('q=bike&loc=melbourne&cat=bicycles,furniture&sub=For+Sale::Electronics,Services::Cleaning&geo=9v6kp');
     expect(parseFiltersFromSearchParams(params)).toEqual({
       keyword: 'bike',
       location: 'melbourne',
       categories: ['bicycles', 'furniture'],
+      subcategories: ['For Sale::Electronics', 'Services::Cleaning'],
       geohashPrefix: '9v6kp'
     });
   });
@@ -37,12 +38,14 @@ describe('filtersToSearchParams', () => {
       keyword: 'bike',
       location: 'melbourne',
       categories: ['bicycles', 'furniture'],
+      subcategories: ['For Sale::Electronics', 'Services::Cleaning'],
       geohashPrefix: '9v6kp'
     };
     const params = filtersToSearchParams(filters);
     expect(params.get('q')).toBe('bike');
     expect(params.get('loc')).toBe('melbourne');
     expect(params.get('cat')).toBe('bicycles,furniture');
+    expect(params.get('sub')).toBe('For Sale::Electronics,Services::Cleaning');
     expect(params.get('geo')).toBe('9v6kp');
   });
 
@@ -64,6 +67,7 @@ describe('round trip', () => {
       keyword: 'bike',
       location: 'melbourne',
       categories: ['bicycles', 'furniture'],
+      subcategories: ['For Sale::Electronics', 'Services::Cleaning'],
       geohashPrefix: '9v6kp'
     };
     expect(parseFiltersFromSearchParams(filtersToSearchParams(filters))).toEqual(filters);

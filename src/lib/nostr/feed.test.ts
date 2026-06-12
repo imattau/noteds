@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { buildListingFilter } from './feed';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_LISTING_BACKFILL_DAYS, buildListingFilter, subscribeToListings } from './feed';
+import { relayPool } from './signer';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('buildListingFilter', () => {
   it('returns just the kind filter when no options are given', () => {
@@ -35,5 +40,20 @@ describe('buildListingFilter', () => {
 
   it('omits #t for an empty categories array', () => {
     expect(buildListingFilter({ categories: [] })).toEqual({ kinds: [30402] });
+  });
+
+  it('uses a default backfill window when subscribing without since', () => {
+    const publish = vi.fn();
+    const unsubscribe = vi.fn();
+    const subscription = { subscribe: vi.fn(() => ({ unsubscribe })) };
+    vi.spyOn(relayPool, 'subscription').mockReturnValue(subscription as any);
+    vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+
+    subscribeToListings(['wss://relay.example/'], {}, publish);
+
+    expect(relayPool.subscription).toHaveBeenCalledWith(['wss://relay.example/'], {
+      kinds: [30402],
+      since: 1_700_000_000 - DEFAULT_LISTING_BACKFILL_DAYS * 24 * 60 * 60
+    });
   });
 });

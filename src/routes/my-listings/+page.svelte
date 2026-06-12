@@ -1,103 +1,250 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import AuthGate from '$components/AuthGate.svelte';
   import { account, relayPool, signer } from '$lib/nostr/signer';
   import { getActiveRelays } from '$lib/nostr/relays';
   import { buildListingEvent, parseListingEvent, type ListingInput } from '$lib/nostr/listings';
-  import { saveDraft } from '$lib/nostr/drafts';
+  import { deleteDraft, saveDraft } from '$lib/nostr/drafts';
+  import {
+    loadOwnedListingIds,
+    removeOwnedListingId,
+    replaceOwnedListingIds,
+    upsertOwnedListingId
+  } from '$lib/nostr/ownedListings';
 
   interface OwnedListing {
     listing: ListingInput;
     created_at: number;
+    eventId: string;
   }
 
-  let items = $state<OwnedListing[]>([]);
+  let listings = $state<OwnedListing[]>([]);
+  let loading = $state(true);
   let error = $state<string | null>(null);
+
+  async function loadAuthoredListings(pubkey: string): Promise<OwnedListing[]> {
+    return new Promise((resolve) => {
+      const items: OwnedListing[] = [];
+      const latestById = new Map<string, OwnedListing>();
+      const subscription = relayPool
+        .subscription(getActiveRelays(), { kinds: [30402], authors: [pubkey] })
+        .subscribe((response: any) => {
+          if (response === 'EOSE') {
+            subscription.unsubscribe();
+            resolve([...latestById.values()].sort((a, b) => b.created_at - a.created_at));
+            return;
+          }
+
+          const listing = parseListingEvent(response);
+          const current = latestById.get(listing.id);
+          const next = {
+            listing,
+            created_at: response.created_at,
+            eventId: response.id
+          };
+          if (!current || next.created_at > current.created_at) {
+            latestById.set(listing.id, next);
+          }
+        });
+    });
+  }
+
+  async function reloadListings(pubkey: string) {
+    loading = true;
+    error = null;
+
+    try {
+      const ownedIds = await loadOwnedListingIds(pubkey);
+      if (ownedIds === null) {
+        const authored = await loadAuthoredListings(pubkey);
+        listings = authored;
+        if (authored.length > 0) {
+          await replaceOwnedListingIds(
+            pubkey,
+            authored.map((item) => item.listing.id)
+          );
+        }
+        return;
+      }
+
+      if (ownedIds.length === 0) {
+        listings = [];
+        return;
+      }
+
+      const ownedSet = new Set(ownedIds);
+      const items = await new Promise<OwnedListing[]>((resolve) => {
+        const latestById = new Map<string, OwnedListing>();
+        const subscription = relayPool
+          .subscription(getActiveRelays(), {
+            kinds: [30402],
+            authors: [pubkey],
+            '#d': ownedIds
+          })
+          .subscribe((response: any) => {
+            if (response === 'EOSE') {
+              subscription.unsubscribe();
+              resolve([...latestById.values()].sort((a, b) => b.created_at - a.created_at));
+              return;
+            }
+
+            const listing = parseListingEvent(response);
+            if (!ownedSet.has(listing.id)) return;
+            const current = latestById.get(listing.id);
+            const next = {
+              listing,
+              created_at: response.created_at,
+              eventId: response.id
+            };
+            if (!current || next.created_at > current.created_at) {
+              latestById.set(listing.id, next);
+            }
+          });
+      });
+
+      listings = items;
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to load your listings.';
+      listings = [];
+    } finally {
+      loading = false;
+    }
+  }
 
   $effect(() => {
     const pubkey = $account?.pubkey;
     if (!pubkey) {
-      items = [];
+      listings = [];
+      loading = false;
       return;
     }
 
-    const subscription = relayPool
-      .subscription(getActiveRelays(), { kinds: [30402], authors: [pubkey] })
-      .subscribe((response: any) => {
-        if (response === 'EOSE') return;
-        const listing = parseListingEvent(response);
-        const existingIndex = items.findIndex((item) => item.listing.id === listing.id);
-        if (existingIndex === -1) {
-          items = [...items, { listing, created_at: response.created_at }];
-        } else if (response.created_at > items[existingIndex].created_at) {
-          items = items.map((item, index) => (index === existingIndex ? { listing, created_at: response.created_at } : item));
-        }
-      });
-
-    return () => subscription.unsubscribe();
+    void reloadListings(pubkey);
   });
-
-  let sortedItems = $derived([...items].sort((a, b) => b.created_at - a.created_at));
 
   async function startEditing(listing: ListingInput) {
     await saveDraft(listing);
+    await goto(`/create?draft=${encodeURIComponent(listing.id)}`);
   }
 
-  async function markSold(listing: ListingInput) {
+  async function markSold(item: OwnedListing) {
     error = null;
+    const pubkey = $account?.pubkey;
+    if (!pubkey) return;
+
     try {
-      const updated: ListingInput = { ...listing, status: 'sold' };
+      const updated: ListingInput = { ...item.listing, status: 'sold' };
       const template = buildListingEvent(updated, false);
       const event = await signer.signEvent(template);
       await relayPool.publish(getActiveRelays(), event);
-      const index = items.findIndex((item) => item.listing.id === listing.id);
-      if (index !== -1) {
-        items = items.map((item, i) => (i === index ? { listing: updated, created_at: event.created_at } : item));
-      }
+      await upsertOwnedListingId(pubkey, updated.id);
+      listings = listings.map((entry) =>
+        entry.listing.id === updated.id ? { ...entry, listing: updated, created_at: event.created_at, eventId: event.id } : entry
+      );
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to mark listing as sold.';
     }
   }
+
+  async function deleteListing(item: OwnedListing) {
+    error = null;
+    const pubkey = $account?.pubkey;
+    if (!pubkey) return;
+
+    const confirmed = confirm(`Delete "${item.listing.title}"? This will remove it from your listings.`);
+    if (!confirmed) return;
+
+    try {
+      const deleteEvent = await signer.signEvent({
+        kind: 5,
+        created_at: Math.floor(Date.now() / 1000),
+        content: 'deleted from my listings',
+        tags: [['e', item.eventId], ['k', '30402']]
+      });
+      await relayPool.publish(getActiveRelays(), deleteEvent);
+      await removeOwnedListingId(pubkey, item.listing.id);
+      listings = listings.filter((entry) => entry.listing.id !== item.listing.id);
+      await deleteDraft(item.listing.id);
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to delete listing.';
+    }
+  }
 </script>
+
+<svelte:head>
+  <title>My Listings - noteds</title>
+</svelte:head>
 
 <h1 class="text-2xl font-semibold">My Listings</h1>
 
 <AuthGate>
   <div class="mt-4">
     {#if error}
-      <p class="mb-2 text-sm text-red-600">{error}</p>
+      <p class="mb-3 text-sm text-red-600">{error}</p>
     {/if}
 
-    {#if sortedItems.length === 0}
+    {#if loading}
+      <p class="text-sm text-slate-500">Loading your listings…</p>
+    {:else if listings.length === 0}
       <p class="text-sm text-slate-500">You haven't published any listings yet.</p>
     {:else}
-      <ul class="flex flex-col gap-3">
-        {#each sortedItems as item (item.listing.id)}
-          <li class="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 class="text-sm font-semibold text-slate-900">{item.listing.title || 'Untitled'}</h2>
-              <p class="text-xs text-slate-500">{item.listing.price.amount} {item.listing.price.currency} · {item.listing.status}</p>
-            </div>
-            <div class="flex gap-2">
-              <a
-                href="/create?draft={item.listing.id}"
-                class="rounded-md border border-slate-300 px-3 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                onclick={() => startEditing(item.listing)}
-              >
-                Edit
-              </a>
-              {#if item.listing.status === 'active'}
+      <div class="grid grid-cols-1 gap-3">
+        {#each listings as item (item.listing.id)}
+          <article class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div class="min-w-0">
+                <div class="flex flex-wrap items-center gap-2">
+                  <h2 class="truncate text-base font-semibold text-slate-900">{item.listing.title || 'Untitled'}</h2>
+                  <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                    {item.listing.status}
+                  </span>
+                </div>
+                <p class="mt-1 text-sm font-medium text-slate-700">
+                  {item.listing.price.amount} {item.listing.price.currency}
+                </p>
+                {#if item.listing.location}
+                  <p class="mt-1 text-sm text-slate-500">{item.listing.location}</p>
+                {/if}
+                <p class="mt-2 line-clamp-2 text-sm text-slate-600">{item.listing.summary}</p>
+
+                {#if item.listing.categories.length > 0}
+                  <div class="mt-3 flex flex-wrap gap-2">
+                    {#each item.listing.categories as category (category)}
+                      <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{category}</span>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+
+              <div class="flex shrink-0 flex-wrap gap-2">
                 <button
                   type="button"
-                  class="rounded-md border border-slate-300 px-3 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                  onclick={() => markSold(item.listing)}
+                  class="rounded-md border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  onclick={() => startEditing(item.listing)}
                 >
-                  Mark sold
+                  Edit
                 </button>
-              {/if}
+                {#if item.listing.status === 'active'}
+                  <button
+                    type="button"
+                    class="rounded-md border border-amber-300 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50"
+                    onclick={() => markSold(item)}
+                  >
+                    Mark sold
+                  </button>
+                {/if}
+                <button
+                  type="button"
+                  class="rounded-md border border-rose-300 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50"
+                  onclick={() => deleteListing(item)}
+                >
+                  Delete
+                </button>
+              </div>
             </div>
-          </li>
+          </article>
         {/each}
-      </ul>
+      </div>
     {/if}
   </div>
 </AuthGate>

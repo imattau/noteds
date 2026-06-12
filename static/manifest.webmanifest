@@ -1,0 +1,25 @@
+{
+  "name": "noteds",
+  "short_name": "noteds",
+  "description": "Nostr classifieds for listings, drafts, and direct messages.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#f8fafc",
+  "theme_color": "#15345d",
+  "icons": [
+    {
+      "src": "./noteds-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./noteds-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

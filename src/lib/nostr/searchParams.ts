@@ -2,6 +2,7 @@ export interface ListingFilters {
   keyword?: string;
   location?: string;
   categories?: string[];
+  subcategories?: string[];
   geohashPrefix?: string;
 }
 
@@ -26,6 +27,14 @@ export function parseFiltersFromSearchParams(params: URLSearchParams): ListingFi
     }
   }
 
+  const sub = params.get('sub');
+  if (sub) {
+    const subcategories = sub.split(',').filter((subcategory) => subcategory.length > 0);
+    if (subcategories.length > 0) {
+      filters.subcategories = subcategories;
+    }
+  }
+
   const geo = params.get('geo');
   if (geo) {
     filters.geohashPrefix = geo;
@@ -45,6 +54,9 @@ export function filtersToSearchParams(filters: ListingFilters): URLSearchParams 
   }
   if (filters.categories?.length) {
     params.set('cat', filters.categories.join(','));
+  }
+  if (filters.subcategories?.length) {
+    params.set('sub', filters.subcategories.join(','));
   }
   if (filters.geohashPrefix) {
     params.set('geo', filters.geohashPrefix);

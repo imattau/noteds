@@ -7,6 +7,8 @@ export interface ListingFeedOptions {
   since?: number;
 }
 
+export const DEFAULT_LISTING_BACKFILL_DAYS = 90;
+
 export function buildListingFilter(opts: ListingFeedOptions): Filter {
   const filter: Filter = { kinds: [30402] };
 
@@ -28,7 +30,9 @@ export function subscribeToListings(
   filters: ListingFeedOptions,
   onEvent: (event: NostrEvent) => void
 ): () => void {
-  const filter = buildListingFilter(filters);
+  const effectiveSince =
+    filters.since ?? Math.floor(Date.now() / 1000) - DEFAULT_LISTING_BACKFILL_DAYS * 24 * 60 * 60;
+  const filter = buildListingFilter({ ...filters, since: effectiveSince });
   const subscription = relayPool.subscription(relays, filter).subscribe((response: any) => {
     if (response !== 'EOSE') {
       onEvent(response);

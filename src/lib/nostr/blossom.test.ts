@@ -1,5 +1,22 @@
-import { describe, expect, it } from 'vitest';
-import { buildBlossomAuthEvent } from './blossom';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('./signer', () => ({
+  signer: {
+    signEvent: vi.fn(async (event) => ({
+      ...event,
+      pubkey: 'a'.repeat(64),
+      id: 'b'.repeat(64),
+      sig: 'c'.repeat(128)
+    }))
+  }
+}));
+
+import { buildBlossomAuthEvent, uploadToBlossomServers } from './blossom';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe('buildBlossomAuthEvent', () => {
   it('returns a kind 24242 event with u and method tags', () => {
@@ -25,5 +42,21 @@ describe('buildBlossomAuthEvent', () => {
     const expirationTag = event.tags.find(([tag]) => tag === 'expiration');
     expect(expirationTag).toBeDefined();
     expect(Number(expirationTag?.[1])).toBeGreaterThan(before);
+  });
+});
+
+describe('uploadToBlossomServers', () => {
+  it('returns the successful upload urls from the servers that worked', async () => {
+    const file = new File([new Uint8Array([1, 2, 3])], 'photo.png', { type: 'image/png' });
+    const result = await uploadToBlossomServers(file, ['https://bad.example', 'https://good.example'], async (_file, server) => {
+      if (server === 'https://good.example') {
+        return 'https://good.example/upload/blob-123';
+      }
+      throw new Error('Upload failed');
+    });
+    expect(result).toEqual({
+      url: 'https://good.example/upload/blob-123',
+      sources: ['https://good.example/upload/blob-123']
+    });
   });
 });

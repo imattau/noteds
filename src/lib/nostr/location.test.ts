@@ -1,5 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { clearCachedBrowserArea, formatAreaLabel, getCachedBrowserArea, reverseGeocodeNominatim } from './location';
+import {
+  clearCachedBrowserArea,
+  formatAreaLabel,
+  getCachedBrowserArea,
+  reverseGeocodeNominatim,
+  searchNominatimLocations
+} from './location';
 
 describe('formatAreaLabel', () => {
   it('joins the most specific available area components', () => {
@@ -53,5 +59,41 @@ describe('reverseGeocodeNominatim', () => {
       country: 'Australia',
       postcode: '3065'
     });
+  });
+});
+
+describe('searchNominatimLocations', () => {
+  it('parses search results into canonical suggestions', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => [
+        {
+          display_name: 'Fitzroy, Melbourne, Victoria, Australia',
+          lat: '-37.799',
+          lon: '144.978',
+          address: {
+            suburb: 'Fitzroy',
+            city: 'Melbourne',
+            state: 'Victoria',
+            country: 'Australia',
+            postcode: '3065'
+          }
+        }
+      ]
+    })) as any;
+
+    await expect(searchNominatimLocations('Fitzroy', { fetchImpl })).resolves.toEqual([
+      {
+        label: 'Fitzroy, Melbourne, Victoria, Australia',
+        latitude: -37.799,
+        longitude: 144.978,
+        geohash: expect.any(String),
+        suburb: 'Fitzroy',
+        city: 'Melbourne',
+        state: 'Victoria',
+        country: 'Australia',
+        postcode: '3065'
+      }
+    ]);
   });
 });

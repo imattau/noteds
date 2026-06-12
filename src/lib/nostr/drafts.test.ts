@@ -35,6 +35,7 @@ const sampleDraft: ListingInput = {
   summary: 'Free to a good home',
   price: { amount: '0', currency: 'USD' },
   categories: ['furniture'],
+  subcategories: [],
   images: [],
   status: 'active',
   content: 'Comfy but worn.'
