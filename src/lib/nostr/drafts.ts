@@ -1,4 +1,4 @@
-import { createStore, del, get, keys, set } from 'idb-keyval';
+import { createStore, del, get, getMany, keys, set } from 'idb-keyval';
 import type { ListingInput } from './listings';
 
 const draftsStore = createStore('noteds-drafts', 'drafts');
@@ -17,9 +17,11 @@ export async function deleteDraft(id: string): Promise<void> {
 
 export async function listDrafts(): Promise<ListingInput[]> {
   const allKeys = await keys(draftsStore);
+  const stringKeys = allKeys.filter((key): key is string => typeof key === 'string');
+  const fetchedDrafts = await getMany<ListingInput | undefined>(stringKeys, draftsStore);
+  
   const drafts: ListingInput[] = [];
-  for (const key of allKeys) {
-    const draft = await get<ListingInput>(key as string, draftsStore);
+  for (const draft of fetchedDrafts) {
     if (draft !== undefined) {
       drafts.push(draft);
     }
