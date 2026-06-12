@@ -535,6 +535,31 @@ export async function queryBrowseCache(filters: BrowseQueryFilters, categoryScop
   }
 }
 
+// Cache-first lookup for a single listing, used by the listing detail page
+// to render instantly if the item was already seen via browse/category pages.
+export async function getCachedBrowseItem(pubkey: string, listingId: string): Promise<BrowseItem | null> {
+  const itemKey = `${pubkey}:${listingId}`;
+
+  if (memoryCache) {
+    const found = memoryCache.items.find((item) => getItemKey(item) === itemKey);
+    if (found) {
+      return found;
+    }
+  }
+
+  if (indexedDbUnavailable) {
+    return null;
+  }
+
+  try {
+    const item = await get<BrowseItem | undefined>(itemKey, ITEMS_STORE);
+    return item ?? null;
+  } catch (error) {
+    disableIndexedDbCache(error);
+    return null;
+  }
+}
+
 export async function cacheBrowseItem(item: BrowseItem): Promise<void> {
   return cacheBrowseItems([item]);
 }

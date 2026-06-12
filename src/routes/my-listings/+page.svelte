@@ -15,6 +15,7 @@
     upsertOwnedListingId
   } from '$lib/nostr/ownedListings';
   import { collectEvents } from '$lib/nostr/requestEvents';
+  import { getCachedBrowseItem } from '$lib/nostr/browseCache';
 
   interface OwnedListing {
     listing: ListingInput;
@@ -76,6 +77,24 @@
       }
 
       const ownedSet = new Set(ownedIds);
+
+      const cachedItems = await Promise.all(
+        ownedIds.map((id) => getCachedBrowseItem(pubkey, id))
+      );
+      const cachedResult: OwnedListing[] = [];
+      for (const item of cachedItems) {
+        if (!item) continue;
+        cachedResult.push({
+          listing: item.listing,
+          created_at: item.created_at,
+          eventId: item.eventId
+        });
+      }
+      if (cachedResult.length > 0) {
+        listings = cachedResult.sort((a, b) => b.created_at - a.created_at);
+        loading = false;
+      }
+
       const events = await collectEvents(
         relayPool.request(getActiveRelays(), {
           kinds: [30402],

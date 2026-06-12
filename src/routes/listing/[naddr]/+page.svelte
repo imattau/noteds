@@ -6,6 +6,7 @@
   import { getDeletedAddresses, getDeletedEventIds } from '$lib/nostr/deletions';
   import { sendDirectMessage } from '$lib/nostr/dm';
   import { parseListingEvent, type ListingInput } from '$lib/nostr/listings';
+  import { getCachedBrowseItem } from '$lib/nostr/browseCache';
   import { getActiveRelays } from '$lib/nostr/relays';
   import { eventStore, relayPool } from '$lib/nostr/runtime';
   import { collectEvents } from '$lib/nostr/requestEvents';
@@ -57,6 +58,12 @@
   $effect(() => {
     let cancelled = false;
     const address = `${data.kind}:${data.pubkey}:${data.identifier}`;
+
+    getCachedBrowseItem(data.pubkey, data.identifier).then((cached) => {
+      if (cancelled || !cached || listing) return;
+      listing = cached.listing;
+      eventId = cached.eventId;
+    });
 
     collectEvents(
       relayPool.request(getActiveRelays(), {
