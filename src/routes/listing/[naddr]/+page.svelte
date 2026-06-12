@@ -8,6 +8,11 @@
   import { parseListingEvent, type ListingInput } from '$lib/nostr/listings';
   import { getActiveRelays } from '$lib/nostr/relays';
   import { relayPool } from '$lib/nostr/signer';
+  import type { NostrEvent } from 'nostr-tools';
+  import { firstValueFrom, of } from 'rxjs';
+  import { catchError, defaultIfEmpty, timeout, toArray } from 'rxjs/operators';
+
+  const LISTING_LOAD_TIMEOUT_MS = 5000;
 
   let { data }: { data: { kind: number; pubkey: string; identifier: string } } = $props();
 
@@ -61,18 +66,32 @@
     let cancelled = false;
     const address = `${data.kind}:${data.pubkey}:${data.identifier}`;
 
-    const subscription = relayPool
-      .subscription(getActiveRelays(), {
-        kinds: [data.kind],
-        authors: [data.pubkey],
-        '#d': [data.identifier]
-      })
-      .subscribe((response: any) => {
-        if (response === 'EOSE' || cancelled) return;
-        listing = parseListingEvent(response);
-        eventId = response.id;
-        deleted = deletedEventIds.includes(response.id);
-      });
+    firstValueFrom(
+      relayPool
+        .request(getActiveRelays(), {
+          kinds: [data.kind],
+          authors: [data.pubkey],
+          '#d': [data.identifier]
+        })
+        .pipe(
+          toArray(),
+          timeout(LISTING_LOAD_TIMEOUT_MS),
+          catchError(() => of<NostrEvent[]>([])),
+          defaultIfEmpty([] as NostrEvent[])
+        )
+    ).then((events) => {
+      if (cancelled) return;
+      let latest: NostrEvent | null = null;
+      for (const event of events) {
+        if (!latest || event.created_at > latest.created_at) {
+          latest = event;
+        }
+      }
+      if (!latest) return;
+      listing = parseListingEvent(latest);
+      eventId = latest.id;
+      deleted = deletedEventIds.includes(latest.id);
+    });
 
     const deleteSubscription = relayPool
       .subscription(getActiveRelays(), { kinds: [5], '#a': [address] })
@@ -90,7 +109,6 @@
 
     return () => {
       cancelled = true;
-      subscription.unsubscribe();
       deleteSubscription.unsubscribe();
     };
   });

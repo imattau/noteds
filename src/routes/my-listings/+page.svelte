@@ -5,6 +5,9 @@
   import { getActiveRelays } from '$lib/nostr/relays';
   import { buildListingEvent, parseListingEvent, type ListingInput } from '$lib/nostr/listings';
   import { deleteDraft, saveDraft } from '$lib/nostr/drafts';
+  import { firstValueFrom, of } from 'rxjs';
+  import { catchError, defaultIfEmpty, timeout, toArray } from 'rxjs/operators';
+  import type { NostrEvent } from 'nostr-tools';
   import {
     loadOwnedListingIds,
     OWNED_LISTINGS_LOAD_TIMEOUT_MS,
@@ -24,39 +27,32 @@
   let error = $state<string | null>(null);
 
   async function loadAuthoredListings(pubkey: string): Promise<OwnedListing[]> {
-    return new Promise((resolve) => {
-      const latestById = new Map<string, OwnedListing>();
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        subscription.unsubscribe();
-        resolve([...latestById.values()].sort((a, b) => b.created_at - a.created_at));
+    const events = await firstValueFrom(
+      relayPool
+        .request(getActiveRelays(), { kinds: [30402], authors: [pubkey] })
+        .pipe(
+          toArray(),
+          timeout(OWNED_LISTINGS_LOAD_TIMEOUT_MS),
+          catchError(() => of<NostrEvent[]>([])),
+          defaultIfEmpty([] as NostrEvent[])
+        )
+    );
+
+    const latestById = new Map<string, OwnedListing>();
+    for (const response of events) {
+      const listing = parseListingEvent(response);
+      const current = latestById.get(listing.id);
+      const next = {
+        listing,
+        created_at: response.created_at,
+        eventId: response.id
       };
+      if (!current || next.created_at > current.created_at) {
+        latestById.set(listing.id, next);
+      }
+    }
 
-      const timeout = setTimeout(finish, OWNED_LISTINGS_LOAD_TIMEOUT_MS);
-
-      const subscription = relayPool
-        .subscription(getActiveRelays(), { kinds: [30402], authors: [pubkey] })
-        .subscribe((response: any) => {
-          if (response === 'EOSE') {
-            finish();
-            return;
-          }
-
-          const listing = parseListingEvent(response);
-          const current = latestById.get(listing.id);
-          const next = {
-            listing,
-            created_at: response.created_at,
-            eventId: response.id
-          };
-          if (!current || next.created_at > current.created_at) {
-            latestById.set(listing.id, next);
-          }
-        });
-    });
+    return [...latestById.values()].sort((a, b) => b.created_at - a.created_at);
   }
 
   async function reloadListings(pubkey: string) {
@@ -83,46 +79,37 @@
       }
 
       const ownedSet = new Set(ownedIds);
-      const items = await new Promise<OwnedListing[]>((resolve) => {
-        const latestById = new Map<string, OwnedListing>();
-        let settled = false;
-        const finish = () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timeout);
-          subscription.unsubscribe();
-          resolve([...latestById.values()].sort((a, b) => b.created_at - a.created_at));
-        };
-
-        const timeout = setTimeout(finish, OWNED_LISTINGS_LOAD_TIMEOUT_MS);
-
-        const subscription = relayPool
-          .subscription(getActiveRelays(), {
+      const events = await firstValueFrom(
+        relayPool
+          .request(getActiveRelays(), {
             kinds: [30402],
             authors: [pubkey],
             '#d': ownedIds
           })
-          .subscribe((response: any) => {
-            if (response === 'EOSE') {
-              finish();
-              return;
-            }
+          .pipe(
+            toArray(),
+            timeout(OWNED_LISTINGS_LOAD_TIMEOUT_MS),
+            catchError(() => of<NostrEvent[]>([])),
+            defaultIfEmpty([] as NostrEvent[])
+          )
+      );
 
-            const listing = parseListingEvent(response);
-            if (!ownedSet.has(listing.id)) return;
-            const current = latestById.get(listing.id);
-            const next = {
-              listing,
-              created_at: response.created_at,
-              eventId: response.id
-            };
-            if (!current || next.created_at > current.created_at) {
-              latestById.set(listing.id, next);
-            }
-          });
-      });
+      const latestById = new Map<string, OwnedListing>();
+      for (const response of events) {
+        const listing = parseListingEvent(response);
+        if (!ownedSet.has(listing.id)) continue;
+        const current = latestById.get(listing.id);
+        const next = {
+          listing,
+          created_at: response.created_at,
+          eventId: response.id
+        };
+        if (!current || next.created_at > current.created_at) {
+          latestById.set(listing.id, next);
+        }
+      }
 
-      listings = items;
+      listings = [...latestById.values()].sort((a, b) => b.created_at - a.created_at);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load your listings.';
       listings = [];

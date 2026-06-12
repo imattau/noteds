@@ -1,8 +1,11 @@
 import { nip19 } from 'nostr-tools';
 import type { NostrEvent } from 'nostr-tools';
+import { firstValueFrom, of } from 'rxjs';
+import { catchError, defaultIfEmpty, timeout, toArray } from 'rxjs/operators';
 import { getActiveRelays } from './relays';
 
 const PROFILE_CACHE_PREFIX = 'noteds:profile:';
+const PROFILE_LOAD_TIMEOUT_MS = 2500;
 
 export interface NostrUser {
   pubkey: string;
@@ -66,39 +69,28 @@ async function fetchProfileMetadata(pubkey: string): Promise<NostrUser['metadata
   const relays = getActiveRelays();
   if (relays.length === 0) return null;
 
-  return await new Promise<NostrUser['metadata']>((resolve) => {
-    let bestEvent: NostrEvent | null = null;
-    let finished = false;
-
-    const done = (metadata: NostrUser['metadata']) => {
-      if (finished) return;
-      finished = true;
-      subscription.unsubscribe();
-      clearTimeout(timeout);
-      resolve(metadata);
-    };
-
-    const timeout = setTimeout(() => {
-      done(bestEvent ? parseProfileEvent(bestEvent) : null);
-    }, 2500);
-
-    const subscription = relayPool
-      .subscription(relays, {
+  const events = await firstValueFrom(
+    relayPool
+      .request(relays, {
         kinds: [0],
         authors: [pubkey]
       })
-      .subscribe((response: any) => {
-        if (response === 'EOSE') {
-          done(bestEvent ? parseProfileEvent(bestEvent) : null);
-          return;
-        }
+      .pipe(
+        toArray(),
+        timeout(PROFILE_LOAD_TIMEOUT_MS),
+        catchError(() => of<NostrEvent[]>([])),
+        defaultIfEmpty([] as NostrEvent[])
+      )
+  );
 
-        const event = response as NostrEvent;
-        if (!bestEvent || event.created_at > bestEvent.created_at) {
-          bestEvent = event;
-        }
-      });
-  });
+  let bestEvent: NostrEvent | null = null;
+  for (const event of events) {
+    if (!bestEvent || event.created_at > bestEvent.created_at) {
+      bestEvent = event;
+    }
+  }
+
+  return bestEvent ? parseProfileEvent(bestEvent) : null;
 }
 
 export async function loadNostrUser(pubkey: string): Promise<NostrUser> {

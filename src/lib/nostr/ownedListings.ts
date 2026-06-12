@@ -1,4 +1,6 @@
 import type { NostrEvent, EventTemplate } from 'nostr-tools';
+import { firstValueFrom, of } from 'rxjs';
+import { catchError, defaultIfEmpty, timeout, toArray } from 'rxjs/operators';
 import { getActiveRelays } from './relays';
 import { relayPool, signer } from './signer';
 
@@ -58,36 +60,29 @@ async function publishOwnedListingIndex(pubkey: string, ids: string[]): Promise<
 }
 
 async function loadOwnedListingIdsOnce(pubkey: string): Promise<string[] | null> {
-  return new Promise((resolve) => {
-    let latest: NostrEvent | null = null;
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      subscription.unsubscribe();
-      resolve(latest ? decodeOwnedListingIndex(latest.content) : null);
-    };
-
-    const timeout = setTimeout(finish, OWNED_LISTINGS_LOAD_TIMEOUT_MS);
-
-    const subscription = relayPool
-      .subscription(getActiveRelays(), {
+  const events = await firstValueFrom(
+    relayPool
+      .request(getActiveRelays(), {
         kinds: [OWNED_LISTINGS_KIND],
         authors: [pubkey],
         '#d': [OWNED_LISTINGS_D_TAG]
       })
-      .subscribe((response: any) => {
-        if (response === 'EOSE') {
-          finish();
-          return;
-        }
+      .pipe(
+        toArray(),
+        timeout(OWNED_LISTINGS_LOAD_TIMEOUT_MS),
+        catchError(() => of<NostrEvent[]>([])),
+        defaultIfEmpty([] as NostrEvent[])
+      )
+  );
 
-        if (!latest || response.created_at > latest.created_at) {
-          latest = response;
-        }
-      });
-  });
+  let latest: NostrEvent | null = null;
+  for (const event of events) {
+    if (!latest || event.created_at > latest.created_at) {
+      latest = event;
+    }
+  }
+
+  return latest ? decodeOwnedListingIndex(latest.content) : null;
 }
 
 export async function loadOwnedListingIds(pubkey: string): Promise<string[] | null> {

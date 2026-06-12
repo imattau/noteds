@@ -1,11 +1,14 @@
 import { RelayPool } from 'applesauce-relay';
 import type { NostrEvent } from 'nostr-tools';
+import { firstValueFrom, of } from 'rxjs';
+import { catchError, defaultIfEmpty, timeout, toArray } from 'rxjs/operators';
 
 import { unique } from './utils';
 import { isSecureRelayUrl } from './security';
 import { getActiveRelays, getCustomRelays, setCustomRelays } from './relays';
 
 const preferenceRelayPool = new RelayPool();
+const PREFERENCE_LOAD_TIMEOUT_MS = 2500;
 
 const CUSTOM_BLOSSOM_SERVERS_KEY = 'noteds:custom-blossom-servers';
 const LEGACY_BLOSSOM_SERVER_KEY = 'noteds:blossom-server';
@@ -117,37 +120,28 @@ async function loadLatestReplaceableEvent(pubkey: string, kind: number): Promise
   const relays = getActiveRelays();
   if (relays.length === 0) return null;
 
-  return await new Promise<NostrEvent | null>((resolve) => {
-    let bestEvent: NostrEvent | null = null;
-    let finished = false;
-
-    const finish = (event: NostrEvent | null) => {
-      if (finished) return;
-      finished = true;
-      clearTimeout(timeout);
-      subscription.unsubscribe();
-      resolve(event);
-    };
-
-    const timeout = setTimeout(() => finish(bestEvent), 2500);
-
-    const subscription = preferenceRelayPool
-      .subscription(relays, {
+  const events = await firstValueFrom(
+    preferenceRelayPool
+      .request(relays, {
         kinds: [kind],
         authors: [pubkey]
       })
-      .subscribe((response: any) => {
-        if (response === 'EOSE') {
-          finish(bestEvent);
-          return;
-        }
+      .pipe(
+        toArray(),
+        timeout(PREFERENCE_LOAD_TIMEOUT_MS),
+        catchError(() => of<NostrEvent[]>([])),
+        defaultIfEmpty([] as NostrEvent[])
+      )
+  );
 
-        const event = response as NostrEvent;
-        if (!bestEvent || event.created_at > bestEvent.created_at) {
-          bestEvent = event;
-        }
-      });
-  });
+  let bestEvent: NostrEvent | null = null;
+  for (const event of events) {
+    if (!bestEvent || event.created_at > bestEvent.created_at) {
+      bestEvent = event;
+    }
+  }
+
+  return bestEvent;
 }
 
 export async function loadUserRelayList(pubkey: string): Promise<string[]> {
