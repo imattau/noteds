@@ -69,6 +69,7 @@
   <link rel="manifest" href={`${base}/manifest.webmanifest`} />
   <link rel="icon" href={`${base}/noteds-icon.svg`} />
   <link rel="apple-touch-icon" href={`${base}/noteds-logo.png`} />
+  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="noteds" />
   <meta name="theme-color" content="#15345d" />

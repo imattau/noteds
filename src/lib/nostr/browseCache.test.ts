@@ -19,6 +19,13 @@ vi.mock('idb-keyval', () => {
     set: async (key: string, value: unknown, storeId?: unknown) => {
       getStoreMap(storeId).set(key, value);
     },
+    getMany: async (keys: string[], storeId?: unknown) => keys.map((key) => getStoreMap(storeId).get(key)),
+    setMany: async (entries: [string, unknown][], storeId?: unknown) => {
+      const store = getStoreMap(storeId);
+      for (const [key, value] of entries) {
+        store.set(key, value);
+      }
+    },
     del: async (key: string, storeId?: unknown) => {
       getStoreMap(storeId).delete(key);
     },
@@ -29,6 +36,7 @@ vi.mock('idb-keyval', () => {
 import {
   cacheBrowseDeletions,
   cacheBrowseItem,
+  flushBrowseCacheSnapshot,
   loadBrowseCache,
   loadBrowseCacheSnapshot,
   mergeBrowseCaches,
@@ -77,6 +85,8 @@ describe('browse cache', () => {
     expect(cache.items).toEqual([sampleItem]);
     expect(cache.deletedEventIds).toEqual([]);
     expect(cache.updatedAt).toBeGreaterThan(0);
+
+    flushBrowseCacheSnapshot();
     expect(loadBrowseCacheSnapshot().items).toEqual([sampleItem]);
   });
 

@@ -31,7 +31,7 @@
   class="flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition hover:shadow-md"
 >
   {#if listing.images.length > 0}
-    <img src={listing.images[0].url} alt={listing.title} class="h-40 w-full object-cover sm:h-48" />
+    <img src={listing.images[0].url} alt={listing.title} class="h-40 w-full object-cover sm:h-48" loading="lazy" decoding="async" />
   {:else}
     <div class="flex h-40 w-full items-center justify-center bg-slate-100 text-slate-400 sm:h-48">
       No image

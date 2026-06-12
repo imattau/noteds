@@ -1,7 +1,18 @@
-import { base, build, files, prerendered, version } from '$service-worker';
+import { build, files, prerendered, version } from '$service-worker';
 
 const CACHE = `noteds-${version}`;
-const PRECACHE = [...new Set([...build, ...files, ...prerendered, `${base}/`, `${base}/index.html`])];
+function getAppBase() {
+  const scopePath = new URL(self.registration.scope).pathname;
+  return scopePath.endsWith('/') ? scopePath.slice(0, -1) : scopePath;
+}
+
+function getShellUrls() {
+  const base = getAppBase();
+  const root = base ? `${base}/` : '/';
+  return [root, `${root}index.html`];
+}
+
+const PRECACHE = [...new Set([...build, ...files, ...prerendered, ...getShellUrls()])];
 
 function isSameOrigin(url) {
   return url.origin === self.location.origin;
@@ -31,7 +42,8 @@ async function networkFirst(request) {
       return cached;
     }
 
-    const fallback = await cache.match(`${base}/`) ?? (await cache.match(`${base}/index.html`));
+    const [root, index] = getShellUrls();
+    const fallback = (await cache.match(root)) ?? (await cache.match(index));
     if (fallback) {
       return fallback;
     }
@@ -55,7 +67,16 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE);
-      await cache.addAll(PRECACHE);
+      for (const url of PRECACHE) {
+        try {
+          const response = await fetch(url, { cache: 'no-cache' });
+          if (response.ok && response.type === 'basic') {
+            await cache.put(url, response.clone());
+          }
+        } catch {
+          // Ignore missing or temporarily unavailable precache entries.
+        }
+      }
       self.skipWaiting();
     })()
   );

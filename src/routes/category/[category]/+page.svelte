@@ -1,10 +1,10 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import {
     cacheBrowseDeletions,
-    cacheBrowseItem,
+    cacheBrowseItems,
     loadBrowseCacheSnapshot,
     mergeBrowseCaches,
     primeBrowseCacheMemory,
@@ -38,20 +38,49 @@
   let subcategoryFilters = $derived((filters.subcategories ?? []).filter((entry) => entry.startsWith(`${category}::`)));
   let deletedEventIds = $state<string[]>([]);
 
-  function addItem(item: FeedItem) {
-    if (deletedEventIds.includes(item.eventId)) {
-      return;
+  // Incoming relay events can arrive in large bursts (e.g. a 90-day backfill).
+  // Batch them so the reactive item list and IndexedDB cache are each updated
+  // once per batch instead of once per event.
+  const FEED_FLUSH_DELAY_MS = 150;
+  let pendingItems: FeedItem[] = [];
+  let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function flushPendingItems() {
+    flushTimer = null;
+    if (pendingItems.length === 0) return;
+    const batch = pendingItems;
+    pendingItems = [];
+
+    let next = items;
+    for (const item of batch) {
+      if (deletedEventIds.includes(item.eventId)) continue;
+      const existingIndex = next.findIndex(
+        (existing) => existing.listing.id === item.listing.id && existing.pubkey === item.pubkey
+      );
+      if (existingIndex === -1) {
+        next = [...next, item];
+      } else if (item.created_at > next[existingIndex].created_at) {
+        next = next.map((existing, index) => (index === existingIndex ? item : existing));
+      }
     }
-    const existingIndex = items.findIndex(
-      (existing) => existing.listing.id === item.listing.id && existing.pubkey === item.pubkey
-    );
-    if (existingIndex === -1) {
-      items = [...items, item];
-    } else if (item.created_at > items[existingIndex].created_at) {
-      items = items.map((existing, index) => (index === existingIndex ? item : existing));
-    }
-    void cacheBrowseItem(item);
+    items = next;
+
+    void cacheBrowseItems(batch);
   }
+
+  function addItem(item: FeedItem) {
+    pendingItems.push(item);
+    if (!flushTimer) {
+      flushTimer = setTimeout(flushPendingItems, FEED_FLUSH_DELAY_MS);
+    }
+  }
+
+  onDestroy(() => {
+    if (flushTimer) {
+      clearTimeout(flushTimer);
+      flushTimer = null;
+    }
+  });
 
   let browseQueryToken = 0;
   $effect(() => {

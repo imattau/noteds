@@ -2,9 +2,6 @@ import { error } from '@sveltejs/kit';
 import { nip19 } from 'nostr-tools';
 import type { PageLoad } from './$types';
 
-export const ssr = false;
-export const prerender = false;
-
 export const load: PageLoad = ({ params }) => {
   let decoded;
   try {

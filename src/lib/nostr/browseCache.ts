@@ -1,19 +1,24 @@
-import { createStore, del, get, keys, set } from 'idb-keyval';
+import { createStore, del, get, getMany, keys, set, setMany } from 'idb-keyval';
 import type { BrowseItem } from './browseCounts';
 import type { ListingFilters } from './searchParams';
 
-const DB_NAME = 'noteds-browse-cache';
-const ITEMS_STORE = createStore(DB_NAME, 'items');
-const EVENT_INDEX_STORE = createStore(DB_NAME, 'event-index');
-const CATEGORY_INDEX_STORE = createStore(DB_NAME, 'category-index');
-const SUBCATEGORY_INDEX_STORE = createStore(DB_NAME, 'subcategory-index');
-const GEOHASH_INDEX_STORE = createStore(DB_NAME, 'geohash-index');
-const DELETIONS_STORE = createStore(DB_NAME, 'deletions');
+// idb-keyval creates one object store per database. Keep each logical store in
+// its own database so adding a new index does not strand the app on an older
+// schema version with missing object stores.
+const ITEMS_STORE = createStore('noteds-browse-cache-items', 'items');
+const EVENT_INDEX_STORE = createStore('noteds-browse-cache-event-index', 'event-index');
+const CATEGORY_INDEX_STORE = createStore('noteds-browse-cache-category-index', 'category-index');
+const SUBCATEGORY_INDEX_STORE = createStore('noteds-browse-cache-subcategory-index', 'subcategory-index');
+const GEOHASH_INDEX_STORE = createStore('noteds-browse-cache-geohash-index', 'geohash-index');
+const DELETIONS_STORE = createStore('noteds-browse-cache-deletions', 'deletions');
 const BROWSE_CACHE_SNAPSHOT_KEY = 'noteds:browse-cache-snapshot:v3';
 const MAX_CACHED_ITEMS = 200;
 const MAX_CACHED_DELETIONS = 500;
+const SNAPSHOT_WRITE_DEBOUNCE_MS = 250;
 
 let memoryCache: BrowseCacheRecord | null = null;
+let snapshotWriteTimer: ReturnType<typeof setTimeout> | null = null;
+let indexedDbUnavailable = false;
 
 export interface BrowseCacheRecord {
   items: BrowseItem[];
@@ -82,12 +87,83 @@ function readSnapshot(): BrowseCacheRecord {
   }
 }
 
+function filterRecordItems(record: BrowseCacheRecord, filters: BrowseQueryFilters, categoryScope?: string): BrowseCacheRecord {
+  const items = record.items.filter((item) => {
+    if (filters.since !== undefined && item.created_at < filters.since) {
+      return false;
+    }
+    if (filters.keyword && !matchesKeyword(item, filters.keyword)) {
+      return false;
+    }
+    if (filters.location && !matchesLocation(item, filters.location)) {
+      return false;
+    }
+    if (filters.geohashPrefix && !matchesGeohash(item, filters.geohashPrefix)) {
+      return false;
+    }
+    if (categoryScope && !item.listing.categories.includes(categoryScope)) {
+      return false;
+    }
+    if (filters.categories?.length && !matchesCategories(item, filters.categories)) {
+      return false;
+    }
+    if (filters.subcategories?.length && !matchesSubcategories(item, filters.subcategories)) {
+      return false;
+    }
+    return true;
+  });
+
+  return normalizeBrowseCache({
+    items,
+    deletedEventIds: record.deletedEventIds,
+    updatedAt: record.updatedAt
+  });
+}
+
+function getFallbackBrowseRecord(filters: BrowseQueryFilters, categoryScope?: string): BrowseCacheRecord {
+  const record = memoryCache ?? readSnapshot();
+  return filterRecordItems(record, filters, categoryScope);
+}
+
+function disableIndexedDbCache(error: unknown) {
+  indexedDbUnavailable = true;
+  if (typeof console !== 'undefined') {
+    console.warn('Browse cache IndexedDB unavailable; falling back to snapshot cache.', error);
+  }
+}
+
 function writeSnapshot(record: BrowseCacheRecord) {
   if (!canUseStorage()) {
     return;
   }
 
   localStorage.setItem(BROWSE_CACHE_SNAPSHOT_KEY, JSON.stringify(normalizeBrowseCache(record, MAX_CACHED_ITEMS)));
+}
+
+function scheduleSnapshotWrite(record: BrowseCacheRecord) {
+  if (!canUseStorage()) {
+    return;
+  }
+
+  if (snapshotWriteTimer) {
+    clearTimeout(snapshotWriteTimer);
+  }
+
+  snapshotWriteTimer = setTimeout(() => {
+    snapshotWriteTimer = null;
+    writeSnapshot(record);
+  }, SNAPSHOT_WRITE_DEBOUNCE_MS);
+}
+
+export function flushBrowseCacheSnapshot(): void {
+  if (snapshotWriteTimer) {
+    clearTimeout(snapshotWriteTimer);
+    snapshotWriteTimer = null;
+  }
+
+  if (memoryCache) {
+    writeSnapshot(memoryCache);
+  }
 }
 
 async function getStringArray(store: ReturnType<typeof createStore>, key: string): Promise<string[]> {
@@ -105,14 +181,6 @@ async function setStringArray(store: ReturnType<typeof createStore>, key: string
     return;
   }
   await set(key, next, store);
-}
-
-async function appendStringArray(store: ReturnType<typeof createStore>, key: string, value: string): Promise<void> {
-  const current = await getStringArray(store, key);
-  if (!current.includes(value)) {
-    current.push(value);
-    await setStringArray(store, key, current);
-  }
 }
 
 async function removeStringArrayEntry(store: ReturnType<typeof createStore>, key: string, value: string): Promise<void> {
@@ -148,6 +216,10 @@ function getGeohashPrefixes(geohash?: string) {
 }
 
 async function readIndexedRecord(): Promise<BrowseCacheRecord> {
+  if (indexedDbUnavailable) {
+    return { items: [], deletedEventIds: [], updatedAt: 0 };
+  }
+
   try {
     const itemKeys = await keys(ITEMS_STORE);
     const deletedEventIds = await keys(DELETIONS_STORE);
@@ -166,6 +238,7 @@ async function readIndexedRecord(): Promise<BrowseCacheRecord> {
       updatedAt: 0
     });
   } catch {
+    indexedDbUnavailable = true;
     return { items: [], deletedEventIds: [], updatedAt: 0 };
   }
 }
@@ -193,41 +266,85 @@ function mergeBrowseDeletionsIntoRecord(record: BrowseCacheRecord, eventIds: str
 }
 
 async function pruneItemFromIndexes(item: BrowseItem, itemKey: string) {
-  const oldCategoryKeys = getCategoryKeys(item);
-  const oldSubcategoryKeys = getSubcategoryKeys(item);
-  const oldGeohashKeys = getGeohashPrefixes(item.listing.geohash);
-
-  for (const category of oldCategoryKeys) {
-    await removeStringArrayEntry(CATEGORY_INDEX_STORE, category, itemKey);
-  }
-  for (const subcategory of oldSubcategoryKeys) {
-    await removeStringArrayEntry(SUBCATEGORY_INDEX_STORE, subcategory, itemKey);
-  }
-  for (const geohashPrefix of oldGeohashKeys) {
-    await removeStringArrayEntry(GEOHASH_INDEX_STORE, geohashPrefix, itemKey);
-  }
+  await Promise.all([
+    ...getCategoryKeys(item).map((category) => removeStringArrayEntry(CATEGORY_INDEX_STORE, category, itemKey)),
+    ...getSubcategoryKeys(item).map((subcategory) =>
+      removeStringArrayEntry(SUBCATEGORY_INDEX_STORE, subcategory, itemKey)
+    ),
+    ...getGeohashPrefixes(item.listing.geohash).map((geohashPrefix) =>
+      removeStringArrayEntry(GEOHASH_INDEX_STORE, geohashPrefix, itemKey)
+    )
+  ]);
 }
 
-async function writeIndexedRecordItem(item: BrowseItem) {
-  const itemKey = getItemKey(item);
-  const previous = await get<BrowseItem | undefined>(itemKey, ITEMS_STORE);
-  await set(itemKey, item, ITEMS_STORE);
-  if (previous && previous.eventId !== item.eventId) {
-    await del(previous.eventId, EVENT_INDEX_STORE);
-    await pruneItemFromIndexes(previous, itemKey);
+// Adds `itemKey` to the index entry for every key returned by `getKeys(item)`,
+// across all items, using a single getMany/setMany round trip per store
+// instead of one get+set pair per index key.
+async function addItemsToIndexStore(
+  store: ReturnType<typeof createStore>,
+  items: BrowseItem[],
+  itemKeys: string[],
+  getKeys: (item: BrowseItem) => string[]
+): Promise<void> {
+  const indexKeyToItemKeys = new Map<string, Set<string>>();
+  items.forEach((item, index) => {
+    for (const indexKey of getKeys(item)) {
+      if (!indexKeyToItemKeys.has(indexKey)) {
+        indexKeyToItemKeys.set(indexKey, new Set());
+      }
+      indexKeyToItemKeys.get(indexKey)!.add(itemKeys[index]);
+    }
+  });
+
+  if (indexKeyToItemKeys.size === 0) {
+    return;
   }
 
-  await set(item.eventId, itemKey, EVENT_INDEX_STORE);
+  const indexKeys = Array.from(indexKeyToItemKeys.keys());
+  const existing = await getMany<string[] | undefined>(indexKeys, store);
+  const updates: [string, string[]][] = indexKeys.map((indexKey, index) => {
+    const current = new Set(Array.isArray(existing[index]) ? existing[index] : []);
+    for (const itemKey of indexKeyToItemKeys.get(indexKey)!) {
+      current.add(itemKey);
+    }
+    return [indexKey, Array.from(current)];
+  });
 
-  for (const category of getCategoryKeys(item)) {
-    await appendStringArray(CATEGORY_INDEX_STORE, category, itemKey);
+  await setMany(updates, store);
+}
+
+async function writeIndexedRecordItems(items: BrowseItem[]): Promise<void> {
+  if (items.length === 0) {
+    return;
   }
-  for (const subcategory of getSubcategoryKeys(item)) {
-    await appendStringArray(SUBCATEGORY_INDEX_STORE, subcategory, itemKey);
-  }
-  for (const geohashPrefix of getGeohashPrefixes(item.listing.geohash)) {
-    await appendStringArray(GEOHASH_INDEX_STORE, geohashPrefix, itemKey);
-  }
+
+  const itemKeys = items.map(getItemKey);
+  const previousItems = await getMany<BrowseItem | undefined>(itemKeys, ITEMS_STORE);
+
+  await setMany(
+    items.map((item, index): [string, BrowseItem] => [itemKeys[index], item]),
+    ITEMS_STORE
+  );
+  await setMany(
+    items.map((item, index): [string, string] => [item.eventId, itemKeys[index]]),
+    EVENT_INDEX_STORE
+  );
+
+  const staleEventIds: string[] = [];
+  const pruneTasks: Promise<void>[] = [];
+  previousItems.forEach((previous, index) => {
+    if (previous && previous.eventId !== items[index].eventId) {
+      staleEventIds.push(previous.eventId);
+      pruneTasks.push(pruneItemFromIndexes(previous, itemKeys[index]));
+    }
+  });
+  await Promise.all([...pruneTasks, ...staleEventIds.map((eventId) => del(eventId, EVENT_INDEX_STORE))]);
+
+  await Promise.all([
+    addItemsToIndexStore(CATEGORY_INDEX_STORE, items, itemKeys, getCategoryKeys),
+    addItemsToIndexStore(SUBCATEGORY_INDEX_STORE, items, itemKeys, getSubcategoryKeys),
+    addItemsToIndexStore(GEOHASH_INDEX_STORE, items, itemKeys, (item) => getGeohashPrefixes(item.listing.geohash))
+  ]);
 }
 
 export function loadBrowseCacheSnapshot(): BrowseCacheRecord {
@@ -237,14 +354,24 @@ export function loadBrowseCacheSnapshot(): BrowseCacheRecord {
 }
 
 export async function loadBrowseCache(): Promise<BrowseCacheRecord> {
+  if (indexedDbUnavailable) {
+    if (memoryCache !== null) {
+      return memoryCache;
+    }
+    const snapshot = readSnapshot();
+    memoryCache = snapshot;
+    return snapshot;
+  }
+
   if (memoryCache !== null) {
     return memoryCache;
   }
 
   const indexed = await readIndexedRecord();
-  memoryCache = indexed.items.length > 0 || indexed.deletedEventIds.length > 0 || indexed.updatedAt > 0
-    ? indexed
-    : readSnapshot();
+  memoryCache =
+    indexed.items.length > 0 || indexed.deletedEventIds.length > 0 || indexed.updatedAt > 0
+      ? indexed
+      : readSnapshot();
   return memoryCache;
 }
 
@@ -328,53 +455,82 @@ function matchesSubcategories(item: BrowseItem, subcategories: string[]) {
 }
 
 export async function queryBrowseCache(filters: BrowseQueryFilters, categoryScope?: string): Promise<BrowseCacheRecord> {
-  const candidateKeys = await resolveCandidateKeys(filters, categoryScope);
-  const deletedEventIds = await keys(DELETIONS_STORE);
-  const deletedSet = new Set(deletedEventIds.filter((eventId): eventId is string => typeof eventId === 'string'));
-  const items: BrowseItem[] = [];
-
-  for (const key of candidateKeys) {
-    const item = await get<BrowseItem>(key, ITEMS_STORE);
-    if (!item || deletedSet.has(item.eventId)) {
-      continue;
-    }
-    if (filters.since !== undefined && item.created_at < filters.since) {
-      continue;
-    }
-    if (filters.keyword && !matchesKeyword(item, filters.keyword)) {
-      continue;
-    }
-    if (filters.location && !matchesLocation(item, filters.location)) {
-      continue;
-    }
-    if (filters.geohashPrefix && !matchesGeohash(item, filters.geohashPrefix)) {
-      continue;
-    }
-    if (categoryScope && !item.listing.categories.includes(categoryScope)) {
-      continue;
-    }
-    if (filters.categories?.length && !matchesCategories(item, filters.categories)) {
-      continue;
-    }
-    if (filters.subcategories?.length && !matchesSubcategories(item, filters.subcategories)) {
-      continue;
-    }
-    items.push(item);
+  if (indexedDbUnavailable) {
+    return getFallbackBrowseRecord(filters, categoryScope);
   }
 
-  return normalizeBrowseCache({
-    items,
-    deletedEventIds: deletedEventIds.filter((eventId): eventId is string => typeof eventId === 'string'),
-    updatedAt: 0
-  });
+  try {
+    const candidateKeys = await resolveCandidateKeys(filters, categoryScope);
+    const deletedEventIds = await keys(DELETIONS_STORE);
+    const deletedSet = new Set(deletedEventIds.filter((eventId): eventId is string => typeof eventId === 'string'));
+    const candidateItems = await getMany<BrowseItem | undefined>(candidateKeys, ITEMS_STORE);
+    const items: BrowseItem[] = [];
+
+    for (const item of candidateItems) {
+      if (!item || deletedSet.has(item.eventId)) {
+        continue;
+      }
+      if (filters.since !== undefined && item.created_at < filters.since) {
+        continue;
+      }
+      if (filters.keyword && !matchesKeyword(item, filters.keyword)) {
+        continue;
+      }
+      if (filters.location && !matchesLocation(item, filters.location)) {
+        continue;
+      }
+      if (filters.geohashPrefix && !matchesGeohash(item, filters.geohashPrefix)) {
+        continue;
+      }
+      if (categoryScope && !item.listing.categories.includes(categoryScope)) {
+        continue;
+      }
+      if (filters.categories?.length && !matchesCategories(item, filters.categories)) {
+        continue;
+      }
+      if (filters.subcategories?.length && !matchesSubcategories(item, filters.subcategories)) {
+        continue;
+      }
+      items.push(item);
+    }
+
+    return normalizeBrowseCache({
+      items,
+      deletedEventIds: deletedEventIds.filter((eventId): eventId is string => typeof eventId === 'string'),
+      updatedAt: 0
+    });
+  } catch (error) {
+    disableIndexedDbCache(error);
+    return getFallbackBrowseRecord(filters, categoryScope);
+  }
 }
 
 export async function cacheBrowseItem(item: BrowseItem): Promise<void> {
-  const current = await loadBrowseCache();
-  await writeIndexedRecordItem(item);
-  const next = mergeBrowseItemIntoRecord(current, item);
-  primeBrowseCacheMemory(next);
-  writeSnapshot(next);
+  return cacheBrowseItems([item]);
+}
+
+// Batched form of cacheBrowseItem: writes all items' index entries in a
+// handful of getMany/setMany round trips instead of one per item, which
+// matters when many listings arrive from a relay backfill in quick succession.
+export async function cacheBrowseItems(items: BrowseItem[]): Promise<void> {
+  if (items.length === 0) {
+    return;
+  }
+
+  let current = await loadBrowseCache();
+  if (!indexedDbUnavailable) {
+    try {
+      await writeIndexedRecordItems(items);
+    } catch (error) {
+      disableIndexedDbCache(error);
+    }
+  }
+
+  for (const item of items) {
+    current = mergeBrowseItemIntoRecord(current, item);
+  }
+  primeBrowseCacheMemory(current);
+  scheduleSnapshotWrite(current);
 }
 
 export async function cacheBrowseDeletions(eventIds: string[]): Promise<void> {
@@ -383,24 +539,34 @@ export async function cacheBrowseDeletions(eventIds: string[]): Promise<void> {
   }
 
   const current = await loadBrowseCache();
-  for (const eventId of eventIds) {
-    const itemKey = await get<string | undefined>(eventId, EVENT_INDEX_STORE);
-    if (itemKey) {
-      const item = await get<BrowseItem | undefined>(itemKey, ITEMS_STORE);
-      if (item) {
-        await pruneItemFromIndexes(item, itemKey);
-        await del(itemKey, ITEMS_STORE);
+  if (!indexedDbUnavailable) {
+    try {
+      for (const eventId of eventIds) {
+        const itemKey = await get<string | undefined>(eventId, EVENT_INDEX_STORE);
+        if (itemKey) {
+          const item = await get<BrowseItem | undefined>(itemKey, ITEMS_STORE);
+          if (item) {
+            await pruneItemFromIndexes(item, itemKey);
+            await del(itemKey, ITEMS_STORE);
+          }
+          await del(eventId, EVENT_INDEX_STORE);
+        }
+        await set(eventId, true, DELETIONS_STORE);
       }
-      await del(eventId, EVENT_INDEX_STORE);
+    } catch (error) {
+      disableIndexedDbCache(error);
     }
-    await set(eventId, true, DELETIONS_STORE);
   }
 
   const next = mergeBrowseDeletionsIntoRecord(current, eventIds);
   primeBrowseCacheMemory(next);
-  writeSnapshot(next);
+  scheduleSnapshotWrite(next);
 }
 
 export function resetBrowseCacheMemoryForTests() {
   memoryCache = null;
+  if (snapshotWriteTimer) {
+    clearTimeout(snapshotWriteTimer);
+    snapshotWriteTimer = null;
+  }
 }
