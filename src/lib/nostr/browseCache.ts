@@ -95,10 +95,7 @@ function filterRecordItems(record: BrowseCacheRecord, filters: BrowseQueryFilter
     if (filters.keyword && !matchesKeyword(item, filters.keyword)) {
       return false;
     }
-    if (filters.location && !matchesLocation(item, filters.location)) {
-      return false;
-    }
-    if (filters.geohashPrefix && !matchesGeohash(item, filters.geohashPrefix)) {
+    if (!matchesLocationFilters(item, filters)) {
       return false;
     }
     if (categoryScope && !item.listing.categories.includes(categoryScope)) {
@@ -406,7 +403,10 @@ async function resolveCandidateKeys(filters: BrowseQueryFilters, categoryScope?:
     }
   }
 
-  if (filters.geohashPrefix) {
+  // When a location filter is also set, matchesLocationFilters treats location
+  // text and geohash as alternatives (OR), so narrowing candidates to the
+  // geohash index here would wrongly exclude location-text-only matches.
+  if (filters.geohashPrefix && !filters.location) {
     candidateSets.push(await getStringArray(GEOHASH_INDEX_STORE, filters.geohashPrefix));
   }
 
@@ -444,6 +444,22 @@ function matchesGeohash(item: BrowseItem, geohashPrefix: string) {
   return item.listing.geohash?.startsWith(geohashPrefix) ?? false;
 }
 
+// A geocoded location selection sets both `location` (display text) and
+// `geohashPrefix`, but listings often populate only one of `location`/`geohash`.
+// Requiring both would wrongly exclude items that match on just one dimension.
+function matchesLocationFilters(item: BrowseItem, filters: BrowseQueryFilters) {
+  if (!filters.location && !filters.geohashPrefix) {
+    return true;
+  }
+  if (filters.location && matchesLocation(item, filters.location)) {
+    return true;
+  }
+  if (filters.geohashPrefix && matchesGeohash(item, filters.geohashPrefix)) {
+    return true;
+  }
+  return false;
+}
+
 function matchesCategories(item: BrowseItem, categories: string[]) {
   return categories.every((category) => item.listing.categories.includes(category));
 }
@@ -476,10 +492,7 @@ export async function queryBrowseCache(filters: BrowseQueryFilters, categoryScop
       if (filters.keyword && !matchesKeyword(item, filters.keyword)) {
         continue;
       }
-      if (filters.location && !matchesLocation(item, filters.location)) {
-        continue;
-      }
-      if (filters.geohashPrefix && !matchesGeohash(item, filters.geohashPrefix)) {
+      if (!matchesLocationFilters(item, filters)) {
         continue;
       }
       if (categoryScope && !item.listing.categories.includes(categoryScope)) {
