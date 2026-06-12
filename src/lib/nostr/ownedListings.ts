@@ -2,7 +2,7 @@ import type { NostrEvent, EventTemplate } from 'nostr-tools';
 import { firstValueFrom, of } from 'rxjs';
 import { catchError, defaultIfEmpty, timeout, toArray } from 'rxjs/operators';
 import { getActiveRelays } from './relays';
-import { relayPool, signer } from './signer';
+import { eventStore, relayPool, signer } from './signer';
 
 export const OWNED_LISTINGS_KIND = 30000;
 export const OWNED_LISTINGS_D_TAG = 'owned-listings';
@@ -75,13 +75,11 @@ async function loadOwnedListingIdsOnce(pubkey: string): Promise<string[] | null>
       )
   );
 
-  let latest: NostrEvent | null = null;
   for (const event of events) {
-    if (!latest || event.created_at > latest.created_at) {
-      latest = event;
-    }
+    eventStore.add(event);
   }
 
+  const latest = eventStore.getReplaceable(OWNED_LISTINGS_KIND, pubkey, OWNED_LISTINGS_D_TAG);
   return latest ? decodeOwnedListingIndex(latest.content) : null;
 }
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import AuthGate from '$components/AuthGate.svelte';
-  import { account, relayPool, signer } from '$lib/nostr/signer';
+  import { account, eventStore, relayPool, signer } from '$lib/nostr/signer';
   import { getActiveRelays } from '$lib/nostr/relays';
   import { buildListingEvent, parseListingEvent, type ListingInput } from '$lib/nostr/listings';
   import { deleteDraft, saveDraft } from '$lib/nostr/drafts';
@@ -38,21 +38,24 @@
         )
     );
 
-    const latestById = new Map<string, OwnedListing>();
-    for (const response of events) {
-      const listing = parseListingEvent(response);
-      const current = latestById.get(listing.id);
-      const next = {
-        listing,
-        created_at: response.created_at,
-        eventId: response.id
-      };
-      if (!current || next.created_at > current.created_at) {
-        latestById.set(listing.id, next);
-      }
+    const dTagValues = new Set<string>();
+    for (const event of events) {
+      dTagValues.add(parseListingEvent(event).id);
+      eventStore.add(event);
     }
 
-    return [...latestById.values()].sort((a, b) => b.created_at - a.created_at);
+    const result: OwnedListing[] = [];
+    for (const dTagValue of dTagValues) {
+      const canonical = eventStore.getReplaceable(30402, pubkey, dTagValue);
+      if (!canonical) continue;
+      result.push({
+        listing: parseListingEvent(canonical),
+        created_at: canonical.created_at,
+        eventId: canonical.id
+      });
+    }
+
+    return result.sort((a, b) => b.created_at - a.created_at);
   }
 
   async function reloadListings(pubkey: string) {
@@ -94,22 +97,22 @@
           )
       );
 
-      const latestById = new Map<string, OwnedListing>();
-      for (const response of events) {
-        const listing = parseListingEvent(response);
-        if (!ownedSet.has(listing.id)) continue;
-        const current = latestById.get(listing.id);
-        const next = {
-          listing,
-          created_at: response.created_at,
-          eventId: response.id
-        };
-        if (!current || next.created_at > current.created_at) {
-          latestById.set(listing.id, next);
-        }
+      for (const event of events) {
+        eventStore.add(event);
       }
 
-      listings = [...latestById.values()].sort((a, b) => b.created_at - a.created_at);
+      const result: OwnedListing[] = [];
+      for (const dTagValue of ownedSet) {
+        const canonical = eventStore.getReplaceable(30402, pubkey, dTagValue);
+        if (!canonical) continue;
+        result.push({
+          listing: parseListingEvent(canonical),
+          created_at: canonical.created_at,
+          eventId: canonical.id
+        });
+      }
+
+      listings = result.sort((a, b) => b.created_at - a.created_at);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load your listings.';
       listings = [];

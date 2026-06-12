@@ -7,7 +7,7 @@
   import { sendDirectMessage } from '$lib/nostr/dm';
   import { parseListingEvent, type ListingInput } from '$lib/nostr/listings';
   import { getActiveRelays } from '$lib/nostr/relays';
-  import { relayPool } from '$lib/nostr/signer';
+  import { eventStore, relayPool } from '$lib/nostr/signer';
   import type { NostrEvent } from 'nostr-tools';
   import { firstValueFrom, of } from 'rxjs';
   import { catchError, defaultIfEmpty, timeout, toArray } from 'rxjs/operators';
@@ -81,12 +81,10 @@
         )
     ).then((events) => {
       if (cancelled) return;
-      let latest: NostrEvent | null = null;
       for (const event of events) {
-        if (!latest || event.created_at > latest.created_at) {
-          latest = event;
-        }
+        eventStore.add(event);
       }
+      const latest = eventStore.getReplaceable(data.kind, data.pubkey, data.identifier);
       if (!latest) return;
       listing = parseListingEvent(latest);
       eventId = latest.id;

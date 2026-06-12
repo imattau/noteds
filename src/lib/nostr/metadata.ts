@@ -65,7 +65,7 @@ function parseProfileEvent(event: NostrEvent): NostrUser['metadata'] {
 async function fetchProfileMetadata(pubkey: string): Promise<NostrUser['metadata']> {
   if (typeof window === 'undefined') return null;
 
-  const { relayPool } = await import('./signer');
+  const { eventStore, relayPool } = await import('./signer');
   const relays = getActiveRelays();
   if (relays.length === 0) return null;
 
@@ -83,13 +83,11 @@ async function fetchProfileMetadata(pubkey: string): Promise<NostrUser['metadata
       )
   );
 
-  let bestEvent: NostrEvent | null = null;
   for (const event of events) {
-    if (!bestEvent || event.created_at > bestEvent.created_at) {
-      bestEvent = event;
-    }
+    eventStore.add(event);
   }
 
+  const bestEvent = eventStore.getReplaceable(0, pubkey);
   return bestEvent ? parseProfileEvent(bestEvent) : null;
 }
 

@@ -6,6 +6,7 @@ import { catchError, defaultIfEmpty, timeout, toArray } from 'rxjs/operators';
 import { unique } from './utils';
 import { isSecureRelayUrl } from './security';
 import { getActiveRelays, getCustomRelays, setCustomRelays } from './relays';
+import { eventStore } from './signer';
 
 const preferenceRelayPool = new RelayPool();
 const PREFERENCE_LOAD_TIMEOUT_MS = 2500;
@@ -134,14 +135,11 @@ async function loadLatestReplaceableEvent(pubkey: string, kind: number): Promise
       )
   );
 
-  let bestEvent: NostrEvent | null = null;
   for (const event of events) {
-    if (!bestEvent || event.created_at > bestEvent.created_at) {
-      bestEvent = event;
-    }
+    eventStore.add(event);
   }
 
-  return bestEvent;
+  return eventStore.getReplaceable(kind, pubkey) ?? null;
 }
 
 export async function loadUserRelayList(pubkey: string): Promise<string[]> {
