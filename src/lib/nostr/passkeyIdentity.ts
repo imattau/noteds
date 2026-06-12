@@ -1,4 +1,5 @@
 import { finalizeEvent, generateSecretKey, getPublicKey, nip04, nip19, nip44, type Event, type EventTemplate } from 'nostr-tools';
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 
 const STORAGE_KEY = 'noteds:passkey-identity';
 
@@ -14,20 +15,7 @@ const PRF_SALT = new Uint8Array([
   163, 200, 19, 102, 58, 240, 6, 177
 ]);
 
-export function bytesToHex(bytes: Uint8Array): string {
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-export function hexToBytes(hex: string): Uint8Array {
-  if (!/^[0-9a-fA-F]*$/.test(hex) || hex.length % 2 !== 0) {
-    throw new Error('Invalid hex string');
-  }
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; i += 2) {
-    bytes[i / 2] = Number.parseInt(hex.slice(i, i + 2), 16);
-  }
-  return bytes;
-}
+export { bytesToHex, hexToBytes };
 
 function toBase64(binary: string): string {
   if (typeof btoa === 'function') {
@@ -263,8 +251,8 @@ export function buildPasskeySignerShim(secretKey: Uint8Array): PasskeySignerShim
       decrypt: async (pubkey: string, ciphertext: string) => nip04.decrypt(secretKey, pubkey, ciphertext)
     },
     nip44: {
-      encrypt: async (pubkey: string, plaintext: string) => nip04.encrypt(secretKey, pubkey, plaintext),
-      decrypt: async (pubkey: string, ciphertext: string) => nip04.decrypt(secretKey, pubkey, ciphertext)
+      encrypt: async (pubkey: string, plaintext: string) => nip44.encrypt(secretKey, pubkey, plaintext),
+      decrypt: async (pubkey: string, ciphertext: string) => nip44.decrypt(secretKey, pubkey, ciphertext)
     },
     __notedsPasskey: true
   };
