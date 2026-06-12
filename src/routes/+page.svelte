@@ -17,7 +17,7 @@
   import { getDeletedEventIds } from '$lib/nostr/deletions';
   import { parseListingEvent, type ListingInput } from '$lib/nostr/listings';
   import { getActiveRelays } from '$lib/nostr/relays';
-  import { relayPool } from '$lib/nostr/signer';
+  import { relayPool } from '$lib/nostr/runtime';
   import { parseFiltersFromSearchParams, type ListingFilters } from '$lib/nostr/searchParams';
 
   interface FeedItem {
@@ -194,23 +194,15 @@
     goto(query ? `${pathname}?${query}` : pathname, { replaceState: true, keepFocus: true, noScroll: true });
   }
 
-  function openCategory(category: string) {
+  function categoryHref(category: string) {
     const query = page.url.searchParams.toString();
-    goto(`/category/${encodeURIComponent(category)}${query ? `?${query}` : ''}`, {
-      replaceState: false,
-      keepFocus: true,
-      noScroll: true
-    });
+    return `/category/${encodeURIComponent(category)}${query ? `?${query}` : ''}`;
   }
 
-  function openSubcategory(parent: string, value: string) {
+  function subcategoryHref(parent: string, value: string) {
     const query = new URLSearchParams(page.url.searchParams);
     query.set('sub', `${parent}::${value}`);
-    goto(`/category/${encodeURIComponent(parent)}?${query.toString()}`, {
-      replaceState: false,
-      keepFocus: true,
-      noScroll: true
-    });
+    return `/category/${encodeURIComponent(parent)}?${query.toString()}`;
   }
 
   function toggleExpandedCategory(category: string) {
@@ -258,13 +250,13 @@
 
   <div class="mt-5 flex flex-wrap gap-2">
     {#each TOP_LEVEL_CATEGORIES as category (category)}
-      <button
-        type="button"
+      <a
+        href={categoryHref(category)}
+        data-sveltekit-preload-code="hover"
         class="rounded-full border px-3 py-1 text-xs font-medium transition-colors {filters.categories?.includes(category) ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}"
-        onclick={() => openCategory(category)}
       >
         {category}
-      </button>
+      </a>
     {/each}
   </div>
 </section>
@@ -323,10 +315,10 @@
       {@const previewSubcategories = isExpanded ? entry.subcategories : entry.subcategories.slice(0, 6)}
       {@const hiddenCount = Math.max(entry.subcategories.length - previewSubcategories.length, 0)}
       <article class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md">
-        <button
-          type="button"
+        <a
+          href={categoryHref(entry.category)}
+          data-sveltekit-preload-code="hover"
           class="flex w-full items-center justify-between gap-4 px-4 py-3 text-left text-white {entry.theme.accent}"
-          onclick={() => openCategory(entry.category)}
         >
           <span class="flex items-center gap-3">
             <span class="grid h-8 w-8 place-items-center rounded-full bg-white/20 text-sm font-semibold">
@@ -340,16 +332,16 @@
           <span class="rounded-full bg-white/15 px-2 py-1 text-xs font-semibold">
             {entry.totalCount > 0 ? `${entry.totalCount}` : '0'}
           </span>
-        </button>
+        </a>
 
         <div class="relative px-4 py-4">
           <div class="flex flex-wrap gap-2">
             {#if previewSubcategories.length > 0}
               {#each previewSubcategories as subcategory (subcategory.value)}
-                <button
-                  type="button"
+                <a
+                  href={subcategoryHref(entry.category, subcategory.value)}
+                  data-sveltekit-preload-code="hover"
                   class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50 {entry.theme.border}"
-                  onclick={() => openSubcategory(entry.category, subcategory.value)}
                 >
                   <span>{subcategory.value}</span>
                   {#if subcategory.count > 0}
@@ -357,7 +349,7 @@
                       {subcategory.count}
                     </span>
                   {/if}
-                </button>
+                </a>
               {/each}
             {:else}
               <p class="text-sm text-slate-500">No sub-categories defined yet.</p>

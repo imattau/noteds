@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_LISTING_BACKFILL_DAYS, buildListingFilter, subscribeToListings } from './feed';
-import { relayPool } from './signer';
+import { relayPool } from './runtime';
 
 afterEach(() => {
   vi.restoreAllMocks();

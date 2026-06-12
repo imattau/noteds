@@ -38,9 +38,8 @@ supporting three signer sources, tried in order:
    session (kept in `sessionStorage` while unlocked).
 2. **NIP-07 extension**: If `window.nostr` is already present (browser
    extension), use it directly.
-3. **`window.nostr.js` bridge**: If neither of the above is available,
-   lazy-load `window.nostr.js`, which provides NIP-07-compatible bridging and
-   NIP-46 (remote signer / bunker) connection support.
+3. **NIP-46 bunker**: If neither of the above is available, fall back to a
+   remote signer connection using the NIP-46 APIs from `nostr-tools`.
 
 A unified `signer` object exposes `getPublicKey`, `signEvent`, and
 `nip04`/`nip44` encrypt/decrypt, used uniformly throughout the app regardless

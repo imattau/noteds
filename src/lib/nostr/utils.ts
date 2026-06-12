@@ -1,19 +1,18 @@
 import type { NostrEvent } from 'nostr-tools';
+import { createReplaceableAddress, getTagValue } from 'applesauce-core/helpers/event';
 
 export function unique<A>(...arrs: A[][]): A[] {
-  const result: A[] = [];
+  const result = new Set<A>();
   for (const arr of arrs) {
     for (const item of arr) {
-      if (!result.includes(item)) {
-        result.push(item);
-      }
+      result.add(item);
     }
   }
-  return result;
+  return [...result];
 }
 
 export function getTagOr(event: NostrEvent, tagName: string, dflt = ''): string {
-  return event.tags.find(([tag]) => tag === tagName)?.[1] || dflt;
+  return getTagValue(event, tagName) ?? dflt;
 }
 
 export function getAllTags(event: NostrEvent, tagName: string): string[] {
@@ -21,6 +20,6 @@ export function getAllTags(event: NostrEvent, tagName: string): string[] {
 }
 
 export function getA(event: NostrEvent): string {
-  const dTag = event.tags.find(([tag, value]) => tag === 'd' && value)?.[1] || '';
-  return `${event.kind}:${event.pubkey}:${dTag}`;
+  const dTag = getTagValue(event, 'd') ?? '';
+  return createReplaceableAddress(event.kind, event.pubkey, dTag);
 }

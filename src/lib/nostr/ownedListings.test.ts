@@ -7,7 +7,7 @@ import {
   encodeOwnedListingIndex,
   loadOwnedListingIds
 } from './ownedListings';
-import { eventStore, relayPool } from './signer';
+import { eventStore, relayPool } from './runtime';
 
 const originalVerifyEvent = eventStore.verifyEvent;
 

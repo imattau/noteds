@@ -1,12 +1,11 @@
 import { RelayPool } from 'applesauce-relay';
 import type { NostrEvent } from 'nostr-tools';
-import { firstValueFrom, of } from 'rxjs';
-import { catchError, defaultIfEmpty, timeout, toArray } from 'rxjs/operators';
+import { normalizeRelayUrl, normalizeURL } from 'applesauce-core/helpers';
 
 import { unique } from './utils';
-import { isSecureRelayUrl } from './security';
 import { getActiveRelays, getCustomRelays, setCustomRelays } from './relays';
-import { eventStore } from './signer';
+import { collectEvents } from './requestEvents';
+import { eventStore } from './runtime';
 
 const preferenceRelayPool = new RelayPool();
 const PREFERENCE_LOAD_TIMEOUT_MS = 2500;
@@ -25,22 +24,18 @@ export function sanitizeBlossomServerUrl(url: string | null | undefined): string
   const trimmed = url.trim();
   if (!trimmed) return null;
 
-  let parsed: URL;
   try {
-    parsed = new URL(trimmed);
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'https:') {
+      return null;
+    }
+    if (!parsed.hostname || parsed.hostname === 'undefined' || parsed.hostname === 'null') {
+      return null;
+    }
+    return normalizeURL(parsed.toString());
   } catch {
     return null;
   }
-
-  if (parsed.protocol !== 'https:') {
-    return null;
-  }
-
-  if (!parsed.hostname || parsed.hostname === 'undefined' || parsed.hostname === 'null') {
-    return null;
-  }
-
-  return parsed.toString();
 }
 
 function normalizeStringList(values: string[]): string[] {
@@ -101,7 +96,15 @@ export function parseRelayListEvent(event: NostrEvent): string[] {
     event.tags
       .filter((tag) => tag[0] === 'r' && typeof tag[1] === 'string')
       .map((tag) => tag[1])
-      .filter((url): url is string => isSecureRelayUrl(url))
+      .filter((url) => {
+        try {
+          const parsed = new URL(url);
+          return parsed.protocol === 'ws:' || parsed.protocol === 'wss:';
+        } catch {
+          return false;
+        }
+      })
+      .map((url) => normalizeRelayUrl(url))
   );
 }
 
@@ -121,18 +124,12 @@ async function loadLatestReplaceableEvent(pubkey: string, kind: number): Promise
   const relays = getActiveRelays();
   if (relays.length === 0) return null;
 
-  const events = await firstValueFrom(
-    preferenceRelayPool
-      .request(relays, {
-        kinds: [kind],
-        authors: [pubkey]
-      })
-      .pipe(
-        toArray(),
-        timeout(PREFERENCE_LOAD_TIMEOUT_MS),
-        catchError(() => of<NostrEvent[]>([])),
-        defaultIfEmpty([] as NostrEvent[])
-      )
+  const events = await collectEvents(
+    preferenceRelayPool.request(relays, {
+      kinds: [kind],
+      authors: [pubkey]
+    }),
+    PREFERENCE_LOAD_TIMEOUT_MS
   );
 
   for (const event of events) {
@@ -155,19 +152,16 @@ export async function loadUserBlossomServers(pubkey: string): Promise<string[]> 
 export async function hydratePreferencesFromNostr(pubkey: string): Promise<void> {
   if (!isBrowser()) return;
 
-  const currentRelays = getCustomRelays();
-  if (currentRelays.length === 0) {
-    const userRelays = await loadUserRelayList(pubkey);
-    if (userRelays.length > 0) {
-      setCustomRelays(userRelays);
-    }
+  const [userRelays, userBlossomServers] = await Promise.all([
+    loadUserRelayList(pubkey),
+    loadUserBlossomServers(pubkey)
+  ]);
+
+  if (userRelays.length > 0) {
+    setCustomRelays(userRelays);
   }
 
-  const currentBlossomServers = getCustomBlossomServers();
-  if (currentBlossomServers.length === 0) {
-    const userBlossomServers = await loadUserBlossomServers(pubkey);
-    if (userBlossomServers.length > 0) {
-      setCustomBlossomServers(userBlossomServers);
-    }
+  if (userBlossomServers.length > 0) {
+    setCustomBlossomServers(userBlossomServers);
   }
 }

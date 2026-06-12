@@ -2,27 +2,45 @@
   import { base } from '$app/paths';
   import { onMount } from 'svelte';
   import '../app.css';
-  import { completePasskeySession, account, signer } from '$lib/nostr/signer';
-  import { unlockPasskeyIdentity } from '$lib/nostr/passkeyIdentity';
+  import type { NostrUser } from '$lib/nostr/metadata';
 
   let { children } = $props();
 
+  let account = $state<NostrUser | null>(null);
+  let accountUnsubscribe: (() => void) | null = null;
   let authError = $state<string | null>(null);
   let connecting = $state(false);
   let passkeyLoading = $state(false);
 
   onMount(() => {
+    let disposed = false;
+    void import('$lib/nostr/signer').then(({ account: accountStore }) => {
+      if (disposed) {
+        return;
+      }
+      accountUnsubscribe = accountStore.subscribe((value) => {
+        account = value;
+      });
+    });
+
     if (!('serviceWorker' in navigator) || !import.meta.env.PROD) {
-      return;
+      return () => {
+        accountUnsubscribe?.();
+      };
     }
 
     void navigator.serviceWorker.register(`${base}/service-worker.js`).catch((error) => {
       console.error('Failed to register service worker', error);
     });
+
+    return () => {
+      disposed = true;
+      accountUnsubscribe?.();
+    };
   });
 
   function getAccountInitials(): string {
-    const label = $account?.metadata?.display_name || $account?.metadata?.name || $account?.npub || '';
+    const label = account?.metadata?.display_name || account?.metadata?.name || account?.npub || '';
     const letters = label
       .replace(/[^a-zA-Z0-9]+/g, ' ')
       .trim()
@@ -42,6 +60,7 @@
     connecting = true;
     authError = null;
     try {
+      const { signer } = await import('$lib/nostr/signer');
       await signer.getPublicKey();
     } catch (error) {
       authError = error instanceof Error ? error.message : 'Failed to connect with Nostr.';
@@ -54,6 +73,10 @@
     passkeyLoading = true;
     authError = null;
     try {
+      const [{ completePasskeySession }, { unlockPasskeyIdentity }] = await Promise.all([
+        import('$lib/nostr/signer'),
+        import('$lib/nostr/passkeyIdentity')
+      ]);
       const { secretKey, pubkey } = await unlockPasskeyIdentity();
       await completePasskeySession(secretKey, pubkey);
     } catch (error) {
@@ -88,9 +111,9 @@
 <div class="min-h-screen bg-slate-50 text-slate-900">
   <header class="border-b border-slate-200 bg-white/90 backdrop-blur">
     <div class="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
-      <a href={`${base}/`} class="flex items-center gap-3">
+      <a href={base || '/'} class="flex items-center gap-3">
         <img
-          src={`${base}/noteds-logo.png`}
+          src="/noteds-icon.svg"
           alt="noteds"
           class="h-11 w-11 rounded-xl object-cover shadow-sm ring-1 ring-slate-200"
         />
@@ -102,28 +125,28 @@
 
       <div class="flex shrink-0 flex-col items-end gap-2">
         <div class="flex flex-wrap items-center justify-end gap-2">
-          {#if $account}
+          {#if account}
             <a
-              href="/my-listings"
+              href={`${base}/my-listings`}
               class="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
             >
               My Listings
             </a>
             <a
-              href="/create"
+              href={`${base}/create`}
               class="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
             >
               Create Listing
             </a>
             <a
-              href="/settings"
+              href={`${base}/settings`}
               class="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1 shadow-sm transition hover:border-slate-300 hover:shadow"
               aria-label="Open account settings"
-              title={$account.metadata?.name || $account.metadata?.display_name || 'Account settings'}
+              title={account.metadata?.name || account.metadata?.display_name || 'Account settings'}
             >
-              {#if $account.metadata?.picture}
+              {#if account.metadata?.picture}
                 <img
-                  src={$account.metadata.picture}
+                  src={account.metadata.picture}
                   alt=""
                   class="h-9 w-9 rounded-full object-cover ring-1 ring-slate-200"
                 />
@@ -135,7 +158,7 @@
             </a>
           {:else}
             <a
-              href="/settings"
+              href={`${base}/settings`}
               class="rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
             >
               Settings
@@ -160,7 +183,7 @@
         </div>
         {#if connecting}
           <p class="max-w-sm text-right text-xs text-slate-500">
-            Waiting for a NIP-07 extension or window.nostr.js bridge.
+            Waiting for a NIP-07 extension or NIP-46 bunker.
           </p>
         {/if}
         {#if authError}

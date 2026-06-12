@@ -1,8 +1,8 @@
 import type { NostrEvent, EventTemplate } from 'nostr-tools';
-import { firstValueFrom, of } from 'rxjs';
-import { catchError, defaultIfEmpty, timeout, toArray } from 'rxjs/operators';
 import { getActiveRelays } from './relays';
-import { eventStore, relayPool, signer } from './signer';
+import { collectEvents } from './requestEvents';
+import { eventStore, relayPool } from './runtime';
+import { signer } from './signer';
 
 export const OWNED_LISTINGS_KIND = 30000;
 export const OWNED_LISTINGS_D_TAG = 'owned-listings';
@@ -60,19 +60,13 @@ async function publishOwnedListingIndex(pubkey: string, ids: string[]): Promise<
 }
 
 async function loadOwnedListingIdsOnce(pubkey: string): Promise<string[] | null> {
-  const events = await firstValueFrom(
-    relayPool
-      .request(getActiveRelays(), {
-        kinds: [OWNED_LISTINGS_KIND],
-        authors: [pubkey],
-        '#d': [OWNED_LISTINGS_D_TAG]
-      })
-      .pipe(
-        toArray(),
-        timeout(OWNED_LISTINGS_LOAD_TIMEOUT_MS),
-        catchError(() => of<NostrEvent[]>([])),
-        defaultIfEmpty([] as NostrEvent[])
-      )
+  const events = await collectEvents(
+    relayPool.request(getActiveRelays(), {
+      kinds: [OWNED_LISTINGS_KIND],
+      authors: [pubkey],
+      '#d': [OWNED_LISTINGS_D_TAG]
+    }),
+    OWNED_LISTINGS_LOAD_TIMEOUT_MS
   );
 
   for (const event of events) {

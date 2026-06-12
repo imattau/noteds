@@ -1,5 +1,5 @@
 import type { Filter, NostrEvent } from 'nostr-tools';
-import { relayPool } from './signer';
+import { relayPool } from './runtime';
 
 export interface ListingFeedOptions {
   categories?: string[];

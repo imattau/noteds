@@ -7,7 +7,8 @@
   import { upsertOwnedListingId } from '$lib/nostr/ownedListings';
   import { buildListingEvent, type ListingInput } from '$lib/nostr/listings';
   import { getActiveRelays } from '$lib/nostr/relays';
-  import { relayPool, signer } from '$lib/nostr/signer';
+  import { relayPool } from '$lib/nostr/runtime';
+  import { signer } from '$lib/nostr/signer';
 
   let error = $state<string | null>(null);
   let initial = $state<ListingInput | undefined>(undefined);

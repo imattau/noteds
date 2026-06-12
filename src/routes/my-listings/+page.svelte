@@ -1,12 +1,11 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import AuthGate from '$components/AuthGate.svelte';
-  import { account, eventStore, relayPool, signer } from '$lib/nostr/signer';
+  import { account, signer } from '$lib/nostr/signer';
+  import { eventStore, relayPool } from '$lib/nostr/runtime';
   import { getActiveRelays } from '$lib/nostr/relays';
   import { buildListingEvent, parseListingEvent, type ListingInput } from '$lib/nostr/listings';
   import { deleteDraft, saveDraft } from '$lib/nostr/drafts';
-  import { firstValueFrom, of } from 'rxjs';
-  import { catchError, defaultIfEmpty, timeout, toArray } from 'rxjs/operators';
   import type { NostrEvent } from 'nostr-tools';
   import {
     loadOwnedListingIds,
@@ -15,6 +14,7 @@
     replaceOwnedListingIds,
     upsertOwnedListingId
   } from '$lib/nostr/ownedListings';
+  import { collectEvents } from '$lib/nostr/requestEvents';
 
   interface OwnedListing {
     listing: ListingInput;
@@ -27,15 +27,9 @@
   let error = $state<string | null>(null);
 
   async function loadAuthoredListings(pubkey: string): Promise<OwnedListing[]> {
-    const events = await firstValueFrom(
-      relayPool
-        .request(getActiveRelays(), { kinds: [30402], authors: [pubkey] })
-        .pipe(
-          toArray(),
-          timeout(OWNED_LISTINGS_LOAD_TIMEOUT_MS),
-          catchError(() => of<NostrEvent[]>([])),
-          defaultIfEmpty([] as NostrEvent[])
-        )
+    const events = await collectEvents(
+      relayPool.request(getActiveRelays(), { kinds: [30402], authors: [pubkey] }),
+      OWNED_LISTINGS_LOAD_TIMEOUT_MS
     );
 
     const dTagValues = new Set<string>();
@@ -82,19 +76,13 @@
       }
 
       const ownedSet = new Set(ownedIds);
-      const events = await firstValueFrom(
-        relayPool
-          .request(getActiveRelays(), {
-            kinds: [30402],
-            authors: [pubkey],
-            '#d': ownedIds
-          })
-          .pipe(
-            toArray(),
-            timeout(OWNED_LISTINGS_LOAD_TIMEOUT_MS),
-            catchError(() => of<NostrEvent[]>([])),
-            defaultIfEmpty([] as NostrEvent[])
-          )
+      const events = await collectEvents(
+        relayPool.request(getActiveRelays(), {
+          kinds: [30402],
+          authors: [pubkey],
+          '#d': ownedIds
+        }),
+        OWNED_LISTINGS_LOAD_TIMEOUT_MS
       );
 
       for (const event of events) {

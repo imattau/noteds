@@ -1,6 +1,7 @@
 import type { EventTemplate } from 'nostr-tools';
 import { getActiveRelays } from './relays';
-import { relayPool, signer } from './signer';
+import { relayPool } from './runtime';
+import { signer } from './signer';
 
 export function buildDirectMessageEvent(recipientPubkey: string, ciphertext: string): EventTemplate {
   return {

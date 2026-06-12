@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { base } from '$app/paths';
   import { account, hasActiveSigner, signer } from '$lib/nostr/signer';
 
   let { children } = $props();
@@ -39,7 +40,7 @@
     {/if}
     <p class="text-xs text-slate-400">
       Set up a passkey identity, or use a NIP-07 extension / NIP-46 bunker, in
-      <a href="/settings" class="underline">Settings</a>.
+      <a href={`${base}/settings`} class="underline">Settings</a>.
     </p>
   </div>
 {/if}

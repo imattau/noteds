@@ -1,8 +1,9 @@
 import { nip19 } from 'nostr-tools';
 import type { NostrEvent } from 'nostr-tools';
-import { firstValueFrom, of } from 'rxjs';
-import { catchError, defaultIfEmpty, timeout, toArray } from 'rxjs/operators';
+import { getProfileContent } from 'applesauce-core/helpers';
 import { getActiveRelays } from './relays';
+import { collectEvents } from './requestEvents';
+import { eventStore, relayPool } from './runtime';
 
 const PROFILE_CACHE_PREFIX = 'noteds:profile:';
 const PROFILE_LOAD_TIMEOUT_MS = 2500;
@@ -49,15 +50,16 @@ function storeCachedUser(user: NostrUser): void {
 
 function parseProfileEvent(event: NostrEvent): NostrUser['metadata'] {
   try {
-    const parsed = JSON.parse(event.content) as Record<string, unknown>;
-    if (!parsed || typeof parsed !== 'object') return null;
+    const profile = JSON.parse(event.content);
+    if (!profile || typeof profile !== 'object') return null;
     const metadata = {
-      name: typeof parsed.name === 'string' ? parsed.name : undefined,
-      display_name: typeof parsed.display_name === 'string' ? parsed.display_name : undefined,
-      picture: typeof parsed.picture === 'string' ? parsed.picture : undefined
+      name: typeof profile.name === 'string' ? profile.name : undefined,
+      display_name: typeof profile.display_name === 'string' ? profile.display_name : undefined,
+      picture: typeof profile.picture === 'string' ? profile.picture : undefined
     };
     return metadata.name || metadata.display_name || metadata.picture ? metadata : null;
-  } catch {
+  } catch (err) {
+    console.error('Failed to parse profile content JSON', err);
     return null;
   }
 }
@@ -65,22 +67,15 @@ function parseProfileEvent(event: NostrEvent): NostrUser['metadata'] {
 async function fetchProfileMetadata(pubkey: string): Promise<NostrUser['metadata']> {
   if (typeof window === 'undefined') return null;
 
-  const { eventStore, relayPool } = await import('./signer');
   const relays = getActiveRelays();
   if (relays.length === 0) return null;
 
-  const events = await firstValueFrom(
-    relayPool
-      .request(relays, {
-        kinds: [0],
-        authors: [pubkey]
-      })
-      .pipe(
-        toArray(),
-        timeout(PROFILE_LOAD_TIMEOUT_MS),
-        catchError(() => of<NostrEvent[]>([])),
-        defaultIfEmpty([] as NostrEvent[])
-      )
+  const events = await collectEvents(
+    relayPool.request(relays, {
+      kinds: [0],
+      authors: [pubkey]
+    }),
+    PROFILE_LOAD_TIMEOUT_MS
   );
 
   for (const event of events) {
@@ -93,14 +88,14 @@ async function fetchProfileMetadata(pubkey: string): Promise<NostrUser['metadata
 
 export async function loadNostrUser(pubkey: string): Promise<NostrUser> {
   const cached = readCachedUser(pubkey);
-  if (cached?.metadata?.name || cached?.metadata?.display_name || cached?.metadata?.picture) {
+  if (cached && cached.metadata !== null) {
     return cached;
   }
 
   const baseUser: NostrUser = {
     pubkey,
     npub: nip19.npubEncode(pubkey),
-    metadata: cached?.metadata ?? null
+    metadata: cached ? cached.metadata : null
   };
 
   const metadata = await fetchProfileMetadata(pubkey);
@@ -108,3 +103,4 @@ export async function loadNostrUser(pubkey: string): Promise<NostrUser> {
   storeCachedUser(user);
   return user;
 }
+

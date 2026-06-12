@@ -7,10 +7,9 @@
   import { sendDirectMessage } from '$lib/nostr/dm';
   import { parseListingEvent, type ListingInput } from '$lib/nostr/listings';
   import { getActiveRelays } from '$lib/nostr/relays';
-  import { eventStore, relayPool } from '$lib/nostr/signer';
+  import { eventStore, relayPool } from '$lib/nostr/runtime';
+  import { collectEvents } from '$lib/nostr/requestEvents';
   import type { NostrEvent } from 'nostr-tools';
-  import { firstValueFrom, of } from 'rxjs';
-  import { catchError, defaultIfEmpty, timeout, toArray } from 'rxjs/operators';
 
   const LISTING_LOAD_TIMEOUT_MS = 5000;
 
@@ -66,19 +65,13 @@
     let cancelled = false;
     const address = `${data.kind}:${data.pubkey}:${data.identifier}`;
 
-    firstValueFrom(
-      relayPool
-        .request(getActiveRelays(), {
-          kinds: [data.kind],
-          authors: [data.pubkey],
-          '#d': [data.identifier]
-        })
-        .pipe(
-          toArray(),
-          timeout(LISTING_LOAD_TIMEOUT_MS),
-          catchError(() => of<NostrEvent[]>([])),
-          defaultIfEmpty([] as NostrEvent[])
-        )
+    collectEvents(
+      relayPool.request(getActiveRelays(), {
+        kinds: [data.kind],
+        authors: [data.pubkey],
+        '#d': [data.identifier]
+      }),
+      LISTING_LOAD_TIMEOUT_MS
     ).then((events) => {
       if (cancelled) return;
       for (const event of events) {

@@ -4,7 +4,7 @@
 
 **Goal:** Build a SvelteKit static-site Nostr classifieds client (NIP-99 listings) with passkey/NIP-07/NIP-46 auth, relay-filtered search (category + geohash), drafts, image upload via Blossom, and seller DMs.
 
-**Architecture:** SvelteKit + `adapter-static`, no backend. `@nostr/tools` for crypto/event helpers, `applesauce-core`/`applesauce-relay`/`applesauce-loaders` for relay pool and event store. Auth ported from `wikistr`'s passkey/PRF implementation with NIP-07/NIP-46 fallback via `window.nostr.js`. Local persistence via `idb-keyval` (drafts, account cache) and `localStorage` (custom relays).
+**Architecture:** SvelteKit + `adapter-static`, no backend. `@nostr/tools` for crypto/event helpers, `applesauce-core`/`applesauce-relay`/`applesauce-loaders` for relay pool and event store. Auth ported from `wikistr`'s passkey/PRF implementation with NIP-07/NIP-46 fallback via `nostr-tools`. Local persistence via `idb-keyval` (drafts, account cache) and `localStorage` (custom relays).
 
 **Tech Stack:** SvelteKit 2, Svelte 5, TypeScript, Tailwind 4, `@nostr/tools`, `applesauce-core`/`applesauce-relay`/`applesauce-loaders`, `@nostr/gadgets`, `idb-keyval`, Vitest.
 
@@ -1027,10 +1027,9 @@ async function ensureWindowNostrBridge(): Promise<void> {
   if (!nostrBridgePromise) {
     nostrBridgePromise = new Promise<void>((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = 'https://unpkg.com/window.nostr.js/dist/window.nostr.js';
       script.async = true;
       script.onload = () => resolve();
-      script.onerror = () => reject(new Error('Failed to load window.nostr.js'));
+      script.onerror = () => reject(new Error('Failed to load the remote signer bridge'));
       document.head.appendChild(script);
     }).finally(() => {
       nostrBridgePromise = null;
@@ -3807,7 +3806,7 @@ git commit -m "Add GitHub Pages deployment workflow"
 ## Self-Review Notes
 
 - **Spec section 1 (Overview & Architecture)**: Task 1 scaffolds the SvelteKit + `adapter-static` project with the exact dependency set (`@nostr/tools`, `applesauce-core`/`applesauce-relay`/`applesauce-loaders`, `@nostr/gadgets`, `idb-keyval`, Tailwind 4, Vitest). Mobile-first Tailwind classes, Svelte 5 runes, and Svelte transitions (`fly`/`fade`/`scale`) are used consistently in Tasks 9-18.
-- **Spec section 2 (Auth & Identity)**: The passkey/PRF identity module is ported in Task 4 (`passkeyIdentity.ts`, renamed `__notedsPasskey`/`noteds:` storage keys, new PRF salt, added `nip44`). Task 5 ports the unified `signer` (getPublicKey/signEvent/nip04/nip44), `account` store, NIP-07/`window.nostr.js` bridge fallback, and passkey session handling. Task 9 wires `account`/`hasActiveSigner` into the nav and `AuthGate`. Task 17 (Settings) exposes registration, nsec import, and logout.
+- **Spec section 2 (Auth & Identity)**: The passkey/PRF identity module is ported in Task 4 (`passkeyIdentity.ts`, renamed `__notedsPasskey`/`noteds:` storage keys, new PRF salt, added `nip44`). Task 5 ports the unified `signer` (getPublicKey/signEvent/nip04/nip44), `account` store, NIP-07/NIP-46 bunker fallback, and passkey session handling. Task 9 wires `account`/`hasActiveSigner` into the nav and `AuthGate`. Task 17 (Settings) exposes registration, nsec import, and logout.
 - **Spec section 3 (Data Model — NIP-99)**: Task 3 provides `encodeGeohash` for the `g` tag. Task 6 provides `buildListingEvent`/`parseListingEvent` for kind 30402/30403 with all NIP-99 tags (`d`, `title`, `summary`, `price`, `location`, `g`, `t`, `image`, `status`). Task 7 provides `idb-keyval`-backed draft persistence mirroring kind 30403.
 - **Spec section 4 (Pages & Components)**: `/` (Tasks 9-10, 15), `/listing/[naddr]` (Tasks 11, 18), `/create` (Task 12-13), `/drafts` (Task 13), `/my-listings` (Task 14), `/settings` (Task 17), plus shared components `ListingCard`, `ListingForm`, `SearchBar`, `AuthGate`, `ImageUploader` (relay management is folded into the Settings page rather than a separate `RelayManager` component, per the relay list section of Task 17).
 - **Spec section 5 (Search)**: Task 8 provides relay-side `buildListingFilter`/`subscribeToListings` for category (`#t`) and geohash (`#g`) filters. Task 15 adds the `SearchBar` component, URL-synced `ListingFilters` (`searchParams.ts`), debounced client-side keyword filtering, and "near me" geohash-prefix search with adjustable precision.

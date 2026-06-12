@@ -18,7 +18,7 @@
   import { getDeletedEventIds } from '$lib/nostr/deletions';
   import { parseListingEvent, type ListingInput } from '$lib/nostr/listings';
   import { getActiveRelays } from '$lib/nostr/relays';
-  import { relayPool } from '$lib/nostr/signer';
+  import { relayPool } from '$lib/nostr/runtime';
   import { parseFiltersFromSearchParams, type ListingFilters } from '$lib/nostr/searchParams';
 
   let { data }: { data: { category: string } } = $props();
@@ -190,7 +190,11 @@
     });
   }
 
-  function toggleSubcategory(value: string) {
+  function categoryHref() {
+    return `/category/${encodeURIComponent(category)}`;
+  }
+
+  function subcategoryHref(value: string) {
     const key = `${category}::${value}`;
     const existing = filters.subcategories ?? [];
     const next = existing.includes(key) ? existing.filter((entry) => entry !== key) : [key];
@@ -200,11 +204,7 @@
     } else {
       params.delete('sub');
     }
-    goto(`${page.url.pathname}?${params.toString()}`, {
-      replaceState: true,
-      keepFocus: true,
-      noScroll: true
-    });
+    return `${categoryHref()}?${params.toString()}`;
   }
 
   let browseData = $derived.by(() => buildBrowseCounts(items, filters, category));
@@ -258,27 +258,27 @@
       <h2 class="text-lg font-semibold text-slate-950 sm:text-xl">Sub-categories</h2>
       <p class="mt-1 text-sm text-slate-500">Each count updates from the current search scope.</p>
     </div>
-    <button
-      type="button"
+    <a
+      href={categoryHref()}
+      data-sveltekit-preload-code="hover"
       class="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
-      onclick={() => goto(`/category/${encodeURIComponent(category)}`, { replaceState: true, keepFocus: true, noScroll: true })}
     >
       Clear sub-category
-    </button>
+    </a>
   </div>
 
   <div class="mt-5 flex flex-wrap gap-2">
     {#each subcategoryCounts as subcategory (subcategory.value)}
-      <button
-        type="button"
+      <a
+        href={subcategoryHref(subcategory.value)}
+        data-sveltekit-preload-code="hover"
         class="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50"
-        onclick={() => toggleSubcategory(subcategory.value)}
       >
         <span>{subcategory.value}</span>
         <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
           {subcategory.count}
         </span>
-      </button>
+      </a>
     {/each}
   </div>
 </section>
