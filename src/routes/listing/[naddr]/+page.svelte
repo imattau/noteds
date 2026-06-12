@@ -3,7 +3,7 @@
   import { fade, scale } from 'svelte/transition';
   import AuthGate from '$components/AuthGate.svelte';
   import BlossomImage from '$components/BlossomImage.svelte';
-  import { getDeletedEventIds } from '$lib/nostr/deletions';
+  import { getDeletedAddresses, getDeletedEventIds } from '$lib/nostr/deletions';
   import { sendDirectMessage } from '$lib/nostr/dm';
   import { parseListingEvent, type ListingInput } from '$lib/nostr/listings';
   import { getActiveRelays } from '$lib/nostr/relays';
@@ -59,6 +59,7 @@
 
   $effect(() => {
     let cancelled = false;
+    const address = `${data.kind}:${data.pubkey}:${data.identifier}`;
 
     const subscription = relayPool
       .subscription(getActiveRelays(), {
@@ -73,15 +74,15 @@
         deleted = deletedEventIds.includes(response.id);
       });
 
-    const deleteSubscription = relayPool.subscription(getActiveRelays(), { kinds: [5] }).subscribe((response: any) => {
-      if (response === 'EOSE' || cancelled) return;
-      const deletedIds = getDeletedEventIds(response);
-      if (deletedIds.length === 0) return;
-      deletedEventIds = [...new Set([...deletedEventIds, ...deletedIds])];
-      if (eventId && deletedIds.includes(eventId)) {
+    const deleteSubscription = relayPool
+      .subscription(getActiveRelays(), { kinds: [5], '#a': [address] })
+      .subscribe((response: any) => {
+        if (response === 'EOSE' || cancelled) return;
+        if (!getDeletedAddresses(response).includes(address)) return;
+        const deletedIds = getDeletedEventIds(response);
+        deletedEventIds = [...new Set([...deletedEventIds, ...deletedIds])];
         deleted = true;
-      }
-    });
+      });
 
     loadNostrUser(data.pubkey).then((user) => {
       if (!cancelled) seller = user;
