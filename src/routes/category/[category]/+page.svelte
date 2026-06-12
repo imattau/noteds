@@ -13,7 +13,7 @@
   import { buildBrowseCounts } from '$lib/nostr/browseCounts';
   import ListingCard from '$components/ListingCard.svelte';
   import SearchBar from '$components/SearchBar.svelte';
-  import { subscribeToListings } from '$lib/nostr/feed';
+  import { DEFAULT_LISTING_BACKFILL_DAYS, subscribeToListings } from '$lib/nostr/feed';
   import { getSubcategories, type TopLevelCategory } from '$lib/nostr/categories';
   import { getDeletedEventIds } from '$lib/nostr/deletions';
   import { parseListingEvent, type ListingInput } from '$lib/nostr/listings';
@@ -134,14 +134,18 @@
   });
 
   $effect(() => {
-    const unsubscribe = relayPool.subscription(getActiveRelays(), { kinds: [5] }).subscribe((response: any) => {
-      if (response === 'EOSE') return;
-      const deleted = getDeletedEventIds(response);
-      if (deleted.length === 0) return;
-      deletedEventIds = [...new Set([...deletedEventIds, ...deleted])];
-      items = items.filter((item) => !deleted.includes(item.eventId));
-      void cacheBrowseDeletions(deleted);
-    });
+    const deletionSince =
+      since ?? Math.floor(Date.now() / 1000) - DEFAULT_LISTING_BACKFILL_DAYS * 24 * 60 * 60;
+    const unsubscribe = relayPool
+      .subscription(getActiveRelays(), { kinds: [5], since: deletionSince })
+      .subscribe((response: any) => {
+        if (response === 'EOSE') return;
+        const deleted = getDeletedEventIds(response);
+        if (deleted.length === 0) return;
+        deletedEventIds = [...new Set([...deletedEventIds, ...deleted])];
+        items = items.filter((item) => !deleted.includes(item.eventId));
+        void cacheBrowseDeletions(deleted);
+      });
 
     return () => unsubscribe.unsubscribe();
   });
