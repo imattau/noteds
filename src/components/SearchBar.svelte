@@ -2,6 +2,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { detectBrowserArea, getCachedBrowserArea, watchLocationSearch, type LocationSuggestion } from '$lib/nostr/location';
+  import LocationSuggestionList from './LocationSuggestionList.svelte';
   import type { ListingFilters } from '$lib/nostr/searchParams';
 
   let {
@@ -190,20 +191,9 @@
           <p class="absolute left-0 top-full z-20 mt-2 text-xs text-red-600">{locationSearchError}</p>
         {/if}
         {#if locationSuggestions.length > 0}
-        <ul class="absolute left-0 top-full z-20 mt-2 max-h-64 w-full overflow-auto rounded-md border border-slate-200 bg-white shadow-lg">
-          {#each locationSuggestions as suggestion (suggestion.label)}
-            <li>
-              <button
-                type="button"
-                class="w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
-                onclick={() => selectLocationSuggestion(suggestion)}
-              >
-                <span class="block font-medium text-slate-900">{suggestion.label}</span>
-                <span class="block text-xs text-slate-500">{suggestion.country || suggestion.state || suggestion.city || suggestion.postcode}</span>
-              </button>
-            </li>
-          {/each}
-        </ul>
+          <div class="absolute left-0 top-full z-20 mt-2 w-full">
+            <LocationSuggestionList suggestions={locationSuggestions} onSelect={selectLocationSuggestion} />
+          </div>
         {/if}
       </div>
     </div>

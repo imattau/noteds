@@ -1,5 +1,6 @@
 <script lang="ts">
   import ImageUploader from './ImageUploader.svelte';
+  import LocationSuggestionList from './LocationSuggestionList.svelte';
   import { detectBrowserArea, watchLocationSearch, type LocationSuggestion } from '$lib/nostr/location';
   import { TOP_LEVEL_CATEGORIES, getSubcategories, type TopLevelCategory } from '$lib/nostr/categories';
   import {
@@ -401,20 +402,9 @@
       <p class="mt-1 text-xs text-red-600">{locationSearchError}</p>
     {/if}
     {#if locationSuggestions.length > 0}
-      <ul class="mt-2 overflow-hidden rounded-md border border-slate-200 bg-white shadow-sm">
-        {#each locationSuggestions as suggestion (suggestion.label)}
-          <li>
-            <button
-              type="button"
-              class="w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
-              onclick={() => selectLocationSuggestion(suggestion)}
-            >
-              <span class="block font-medium text-slate-900">{suggestion.label}</span>
-              <span class="block text-xs text-slate-500">{suggestion.country || suggestion.state || suggestion.city || suggestion.postcode}</span>
-            </button>
-          </li>
-        {/each}
-      </ul>
+      <div class="mt-2">
+        <LocationSuggestionList suggestions={locationSuggestions} onSelect={selectLocationSuggestion} />
+      </div>
     {/if}
     {#if geoError}
       <p class="mt-1 text-xs text-red-600">{geoError}</p>

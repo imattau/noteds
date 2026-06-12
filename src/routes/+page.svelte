@@ -1,39 +1,17 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { onDestroy, untrack } from 'svelte';
   import SearchBar from '$components/SearchBar.svelte';
-  import {
-    cacheBrowseDeletions,
-    cacheBrowseItems,
-    loadBrowseCacheSnapshot,
-    mergeBrowseCaches,
-    primeBrowseCacheMemory,
-    queryBrowseCache
-  } from '$lib/nostr/browseCache';
   import { buildBrowseCounts } from '$lib/nostr/browseCounts';
-  import { DEFAULT_LISTING_BACKFILL_DAYS, subscribeToListings } from '$lib/nostr/feed';
   import { TOP_LEVEL_CATEGORIES } from '$lib/nostr/categories';
-  import { getDeletedEventIds } from '$lib/nostr/deletions';
-  import { parseListingEvent, type ListingInput } from '$lib/nostr/listings';
-  import { getActiveRelays } from '$lib/nostr/relays';
-  import { relayPool } from '$lib/nostr/runtime';
+  import { useBrowseFeed } from '$lib/nostr/useBrowseFeed.svelte';
   import { parseFiltersFromSearchParams, type ListingFilters } from '$lib/nostr/searchParams';
 
-  interface FeedItem {
-    listing: ListingInput;
-    pubkey: string;
-    created_at: number;
-    eventId: string;
-  }
-
-  const browseCache = loadBrowseCacheSnapshot();
-  let items = $state<FeedItem[]>(browseCache.items);
   let since = $state<number | undefined>(undefined);
   let expandedCategories = $state<string[]>([]);
-  let deletedEventIds = $state<string[]>(browseCache.deletedEventIds);
 
   let filters = $derived(parseFiltersFromSearchParams(page.url.searchParams));
+  const browseFeed = useBrowseFeed({ filters: () => filters, since: () => since, categories: () => filters.categories });
   const categoryThemes = [
     { accent: 'bg-teal-700', dot: 'bg-teal-100 text-teal-800', border: 'border-teal-200' },
     { accent: 'bg-sky-700', dot: 'bg-sky-100 text-sky-800', border: 'border-sky-200' },
@@ -42,117 +20,6 @@
     { accent: 'bg-violet-700', dot: 'bg-violet-100 text-violet-800', border: 'border-violet-200' },
     { accent: 'bg-blue-700', dot: 'bg-blue-100 text-blue-800', border: 'border-blue-200' }
   ];
-
-  // Incoming relay events can arrive in large bursts (e.g. a 90-day backfill).
-  // Batch them so the reactive item list and IndexedDB cache are each updated
-  // once per batch instead of once per event.
-  const FEED_FLUSH_DELAY_MS = 150;
-  let pendingItems: FeedItem[] = [];
-  let flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function flushPendingItems() {
-    flushTimer = null;
-    if (pendingItems.length === 0) return;
-    const batch = pendingItems;
-    pendingItems = [];
-
-    const map = new Map<string, FeedItem>();
-    for (const item of items) {
-      map.set(`${item.listing.id}:${item.pubkey}`, item);
-    }
-    for (const item of batch) {
-      if (deletedEventIds.includes(item.eventId)) continue;
-      const key = `${item.listing.id}:${item.pubkey}`;
-      const existing = map.get(key);
-      if (!existing || item.created_at > existing.created_at) {
-        map.set(key, item);
-      }
-    }
-    items = Array.from(map.values());
-
-    void cacheBrowseItems(batch);
-  }
-
-  function addItem(item: FeedItem) {
-    pendingItems.push(item);
-    if (!flushTimer) {
-      flushTimer = setTimeout(flushPendingItems, FEED_FLUSH_DELAY_MS);
-    }
-  }
-
-  onDestroy(() => {
-    if (flushTimer) {
-      clearTimeout(flushTimer);
-      flushTimer = null;
-    }
-  });
-
-  let browseQueryToken = 0;
-  $effect(() => {
-    const token = ++browseQueryToken;
-    const current = untrack(() => ({
-      items,
-      deletedEventIds,
-      updatedAt: browseCache.updatedAt
-    }));
-
-    void queryBrowseCache(
-      {
-        since,
-        keyword: filters.keyword,
-        location: filters.location,
-        categories: filters.categories,
-        subcategories: filters.subcategories,
-        geohashPrefix: filters.geohashPrefix
-      }
-    ).then((cache) => {
-      if (token !== browseQueryToken) {
-        return;
-      }
-
-      const merged = mergeBrowseCaches(current, cache);
-
-      items = merged.items;
-      deletedEventIds = merged.deletedEventIds;
-      primeBrowseCacheMemory(merged);
-    });
-
-    return undefined;
-  });
-
-  $effect(() => {
-    const unsubscribe = subscribeToListings(
-      getActiveRelays(),
-      { since, categories: filters.categories, geohashPrefix: filters.geohashPrefix },
-      (event) => {
-        addItem({
-          listing: parseListingEvent(event),
-          pubkey: event.pubkey,
-          created_at: event.created_at,
-          eventId: event.id
-        });
-      }
-    );
-
-    return unsubscribe;
-  });
-
-  $effect(() => {
-    const deletionSince =
-      since ?? Math.floor(Date.now() / 1000) - DEFAULT_LISTING_BACKFILL_DAYS * 24 * 60 * 60;
-    const unsubscribe = relayPool
-      .subscription(getActiveRelays(), { kinds: [5], since: deletionSince })
-      .subscribe((response: any) => {
-        if (response === 'EOSE') return;
-        const deleted = getDeletedEventIds(response);
-        if (deleted.length === 0) return;
-        deletedEventIds = [...new Set([...deletedEventIds, ...deleted])];
-        items = items.filter((item) => !deleted.includes(item.eventId));
-        void cacheBrowseDeletions(deleted);
-      });
-
-    return () => unsubscribe.unsubscribe();
-  });
 
   function handleFiltersChange(changes: ListingFilters) {
     const params = new URLSearchParams(page.url.searchParams);
@@ -221,7 +88,7 @@
     )
   );
 
-  let browseData = $derived.by(() => buildBrowseCounts(items, filters));
+  let browseData = $derived.by(() => buildBrowseCounts(browseFeed.items, filters));
   let browseCategories = $derived(
     browseData.categoryBrowseEntries.map((entry, index) => ({
       ...entry,

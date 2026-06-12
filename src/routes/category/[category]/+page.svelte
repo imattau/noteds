@@ -1,153 +1,24 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { onDestroy, untrack } from 'svelte';
-  import {
-    cacheBrowseDeletions,
-    cacheBrowseItems,
-    loadBrowseCacheSnapshot,
-    mergeBrowseCaches,
-    primeBrowseCacheMemory,
-    queryBrowseCache
-  } from '$lib/nostr/browseCache';
   import { buildBrowseCounts } from '$lib/nostr/browseCounts';
   import ListingCard from '$components/ListingCard.svelte';
   import SearchBar from '$components/SearchBar.svelte';
-  import { DEFAULT_LISTING_BACKFILL_DAYS, subscribeToListings } from '$lib/nostr/feed';
   import { getSubcategories, type TopLevelCategory } from '$lib/nostr/categories';
-  import { getDeletedEventIds } from '$lib/nostr/deletions';
-  import { parseListingEvent, type ListingInput } from '$lib/nostr/listings';
-  import { getActiveRelays } from '$lib/nostr/relays';
-  import { relayPool } from '$lib/nostr/runtime';
+  import { useBrowseFeed } from '$lib/nostr/useBrowseFeed.svelte';
   import { parseFiltersFromSearchParams, type ListingFilters } from '$lib/nostr/searchParams';
 
   let { data }: { data: { category: string } } = $props();
 
-  interface FeedItem {
-    listing: ListingInput;
-    pubkey: string;
-    created_at: number;
-    eventId: string;
-  }
-
-  const browseCache = loadBrowseCacheSnapshot();
-  let items = $state<FeedItem[]>(browseCache.items);
   let since = $state<number | undefined>(undefined);
   let filters = $derived(parseFiltersFromSearchParams(page.url.searchParams));
   let category = $derived(data.category as TopLevelCategory);
   let subcategoryFilters = $derived((filters.subcategories ?? []).filter((entry) => entry.startsWith(`${category}::`)));
-  let deletedEventIds = $state<string[]>([]);
-
-  // Incoming relay events can arrive in large bursts (e.g. a 90-day backfill).
-  // Batch them so the reactive item list and IndexedDB cache are each updated
-  // once per batch instead of once per event.
-  const FEED_FLUSH_DELAY_MS = 150;
-  let pendingItems: FeedItem[] = [];
-  let flushTimer: ReturnType<typeof setTimeout> | null = null;
-
-  function flushPendingItems() {
-    flushTimer = null;
-    if (pendingItems.length === 0) return;
-    const batch = pendingItems;
-    pendingItems = [];
-
-    const map = new Map<string, FeedItem>();
-    for (const item of items) {
-      map.set(`${item.listing.id}:${item.pubkey}`, item);
-    }
-    for (const item of batch) {
-      if (deletedEventIds.includes(item.eventId)) continue;
-      const key = `${item.listing.id}:${item.pubkey}`;
-      const existing = map.get(key);
-      if (!existing || item.created_at > existing.created_at) {
-        map.set(key, item);
-      }
-    }
-    items = Array.from(map.values());
-
-    void cacheBrowseItems(batch);
-  }
-
-  function addItem(item: FeedItem) {
-    pendingItems.push(item);
-    if (!flushTimer) {
-      flushTimer = setTimeout(flushPendingItems, FEED_FLUSH_DELAY_MS);
-    }
-  }
-
-  onDestroy(() => {
-    if (flushTimer) {
-      clearTimeout(flushTimer);
-      flushTimer = null;
-    }
-  });
-
-  let browseQueryToken = 0;
-  $effect(() => {
-    const token = ++browseQueryToken;
-    const current = untrack(() => ({
-      items,
-      deletedEventIds,
-      updatedAt: browseCache.updatedAt
-    }));
-
-    void queryBrowseCache(
-      {
-        since,
-        keyword: filters.keyword,
-        location: filters.location,
-        categories: filters.categories,
-        subcategories: filters.subcategories,
-        geohashPrefix: filters.geohashPrefix
-      },
-      category
-    ).then((cache) => {
-      if (token !== browseQueryToken) {
-        return;
-      }
-
-      const merged = mergeBrowseCaches(current, cache);
-
-      items = merged.items;
-      deletedEventIds = merged.deletedEventIds;
-      primeBrowseCacheMemory(merged);
-    });
-
-    return undefined;
-  });
-
-  $effect(() => {
-    const unsubscribe = subscribeToListings(
-      getActiveRelays(),
-      { since, categories: [category], geohashPrefix: filters.geohashPrefix },
-      (event) => {
-        addItem({
-          listing: parseListingEvent(event),
-          pubkey: event.pubkey,
-          created_at: event.created_at,
-          eventId: event.id
-        });
-      }
-    );
-
-    return unsubscribe;
-  });
-
-  $effect(() => {
-    const deletionSince =
-      since ?? Math.floor(Date.now() / 1000) - DEFAULT_LISTING_BACKFILL_DAYS * 24 * 60 * 60;
-    const unsubscribe = relayPool
-      .subscription(getActiveRelays(), { kinds: [5], since: deletionSince })
-      .subscribe((response: any) => {
-        if (response === 'EOSE') return;
-        const deleted = getDeletedEventIds(response);
-        if (deleted.length === 0) return;
-        deletedEventIds = [...new Set([...deletedEventIds, ...deleted])];
-        items = items.filter((item) => !deleted.includes(item.eventId));
-        void cacheBrowseDeletions(deleted);
-      });
-
-    return () => unsubscribe.unsubscribe();
+  const browseFeed = useBrowseFeed({
+    filters: () => filters,
+    since: () => since,
+    categories: () => [category],
+    categoryScope: () => category
   });
 
   function loadMore() {
@@ -207,7 +78,7 @@
     return `${categoryHref()}?${params.toString()}`;
   }
 
-  let browseData = $derived.by(() => buildBrowseCounts(items, filters, category));
+  let browseData = $derived.by(() => buildBrowseCounts(browseFeed.items, filters, category));
   let visibleItems = $derived([...browseData.selectedItems].sort((a, b) => b.created_at - a.created_at));
   let subcategoryCounts = $derived(
     getSubcategories(category).map((value) => ({
