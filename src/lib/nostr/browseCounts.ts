@@ -31,7 +31,11 @@ function matchesLocation(item: BrowseItem, location: string) {
 }
 
 function matchesGeohash(item: BrowseItem, geohashPrefix: string) {
-  return item.listing.geohash?.startsWith(geohashPrefix) ?? false;
+  const geohash = item.listing.geohash;
+  if (!geohash) {
+    return false;
+  }
+  return geohash.startsWith(geohashPrefix) || geohashPrefix.startsWith(geohash);
 }
 
 // A geocoded location selection sets both `location` (display text) and

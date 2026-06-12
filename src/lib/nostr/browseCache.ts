@@ -406,8 +406,18 @@ async function resolveCandidateKeys(filters: BrowseQueryFilters, categoryScope?:
   // When a location filter is also set, matchesLocationFilters treats location
   // text and geohash as alternatives (OR), so narrowing candidates to the
   // geohash index here would wrongly exclude location-text-only matches.
+  // The geohash index stores, for each listing, keys for every prefix of its
+  // geohash. A filter prefix longer than a listing's geohash won't appear as
+  // an index key directly, but the listing's (shorter) geohash will appear as
+  // a prefix of the filter, so look up every prefix of the filter too.
   if (filters.geohashPrefix && !filters.location) {
-    candidateSets.push(await getStringArray(GEOHASH_INDEX_STORE, filters.geohashPrefix));
+    const candidateKeys = new Set<string>();
+    for (const prefix of getGeohashPrefixes(filters.geohashPrefix)) {
+      for (const key of await getStringArray(GEOHASH_INDEX_STORE, prefix)) {
+        candidateKeys.add(key);
+      }
+    }
+    candidateSets.push(Array.from(candidateKeys));
   }
 
   if (candidateSets.length === 0) {
@@ -441,7 +451,11 @@ function matchesLocation(item: BrowseItem, location: string) {
 }
 
 function matchesGeohash(item: BrowseItem, geohashPrefix: string) {
-  return item.listing.geohash?.startsWith(geohashPrefix) ?? false;
+  const geohash = item.listing.geohash;
+  if (!geohash) {
+    return false;
+  }
+  return geohash.startsWith(geohashPrefix) || geohashPrefix.startsWith(geohash);
 }
 
 // A geocoded location selection sets both `location` (display text) and

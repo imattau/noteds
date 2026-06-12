@@ -124,6 +124,10 @@ describe('browse cache', () => {
     const geohashResult = await queryBrowseCache({ geohashPrefix: 'r1r0p' });
     expect(geohashResult.items).toHaveLength(1);
     expect(geohashResult.items[0].listing.id).toBe('listing-1');
+
+    const preciseGeohashResult = await queryBrowseCache({ geohashPrefix: 'r1r0p12' });
+    expect(preciseGeohashResult.items).toHaveLength(1);
+    expect(preciseGeohashResult.items[0].listing.id).toBe('listing-1');
   });
 
   it('merges local snapshot and indexeddb cache', () => {
