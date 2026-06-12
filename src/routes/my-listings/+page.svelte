@@ -7,6 +7,7 @@
   import { deleteDraft, saveDraft } from '$lib/nostr/drafts';
   import {
     loadOwnedListingIds,
+    OWNED_LISTINGS_LOAD_TIMEOUT_MS,
     removeOwnedListingId,
     replaceOwnedListingIds,
     upsertOwnedListingId
@@ -24,14 +25,23 @@
 
   async function loadAuthoredListings(pubkey: string): Promise<OwnedListing[]> {
     return new Promise((resolve) => {
-      const items: OwnedListing[] = [];
       const latestById = new Map<string, OwnedListing>();
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        subscription.unsubscribe();
+        resolve([...latestById.values()].sort((a, b) => b.created_at - a.created_at));
+      };
+
+      const timeout = setTimeout(finish, OWNED_LISTINGS_LOAD_TIMEOUT_MS);
+
       const subscription = relayPool
         .subscription(getActiveRelays(), { kinds: [30402], authors: [pubkey] })
         .subscribe((response: any) => {
           if (response === 'EOSE') {
-            subscription.unsubscribe();
-            resolve([...latestById.values()].sort((a, b) => b.created_at - a.created_at));
+            finish();
             return;
           }
 
@@ -75,6 +85,17 @@
       const ownedSet = new Set(ownedIds);
       const items = await new Promise<OwnedListing[]>((resolve) => {
         const latestById = new Map<string, OwnedListing>();
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          subscription.unsubscribe();
+          resolve([...latestById.values()].sort((a, b) => b.created_at - a.created_at));
+        };
+
+        const timeout = setTimeout(finish, OWNED_LISTINGS_LOAD_TIMEOUT_MS);
+
         const subscription = relayPool
           .subscription(getActiveRelays(), {
             kinds: [30402],
@@ -83,8 +104,7 @@
           })
           .subscribe((response: any) => {
             if (response === 'EOSE') {
-              subscription.unsubscribe();
-              resolve([...latestById.values()].sort((a, b) => b.created_at - a.created_at));
+              finish();
               return;
             }
 
