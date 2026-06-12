@@ -220,18 +220,21 @@ async function readIndexedRecord(): Promise<BrowseCacheRecord> {
   try {
     const itemKeys = await keys(ITEMS_STORE);
     const deletedEventIds = await keys(DELETIONS_STORE);
+    const deletedSet = new Set(deletedEventIds.filter((eventId): eventId is string => typeof eventId === 'string'));
+    
+    const stringKeys = itemKeys.filter((key): key is string => typeof key === 'string');
+    const fetchedItems = await getMany<BrowseItem | undefined>(stringKeys, ITEMS_STORE);
     const items: BrowseItem[] = [];
 
-    for (const key of itemKeys) {
-      const item = await get<BrowseItem>(key as string, ITEMS_STORE);
-      if (item && !deletedEventIds.includes(item.eventId)) {
+    for (const item of fetchedItems) {
+      if (item && !deletedSet.has(item.eventId)) {
         items.push(item);
       }
     }
 
     return normalizeBrowseCache({
       items,
-      deletedEventIds: deletedEventIds.filter((eventId): eventId is string => typeof eventId === 'string'),
+      deletedEventIds: Array.from(deletedSet),
       updatedAt: 0
     });
   } catch {

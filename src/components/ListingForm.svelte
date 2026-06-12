@@ -9,6 +9,8 @@
     type ListingSubcategory
   } from '$lib/nostr/listings';
 
+  import { marked } from 'marked';
+
   let {
     initial,
     onSubmit
@@ -60,21 +62,12 @@
     images = initial?.images ? initial.images.map((image) => ({ url: image.url, sources: [...image.sources] })) : [];
   });
 
-  function escapeHtml(input: string): string {
-    return input.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-
   function renderMarkdown(md: string): string {
-    let html = escapeHtml(md);
-    html = html.replace(/^# (.+)$/gm, '<h1 class="mb-2 mt-4 text-xl font-semibold">$1</h1>');
-    html = html.replace(/^## (.+)$/gm, '<h2 class="mb-2 mt-3 text-lg font-semibold">$1</h2>');
-    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" class="text-blue-600 underline" target="_blank" rel="noopener noreferrer">$1</a>');
-    return html
-      .split(/\n\s*\n/)
-      .map((block) => `<p class="mb-2">${block.replace(/\n/g, '<br>')}</p>`)
-      .join('');
+    try {
+      return marked.parse(md, { gfm: true, breaks: true }) as string;
+    } catch {
+      return md;
+    }
   }
 
   function removeCategory(category: string) {

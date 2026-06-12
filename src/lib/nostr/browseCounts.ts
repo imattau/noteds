@@ -15,19 +15,27 @@ export interface CategoryBrowseEntry {
   subcategories: Array<{ value: string; count: number }>;
 }
 
-function matchesKeyword(item: BrowseItem, keyword: string) {
-  const needle = keyword.toLowerCase();
-  return (
-    item.listing.title.toLowerCase().includes(needle) ||
-    item.listing.summary.toLowerCase().includes(needle) ||
-    item.listing.content.toLowerCase().includes(needle) ||
-    (item.listing.location ?? '').toLowerCase().includes(needle)
-  );
+// Use a WeakMap to cache search target concatenations and location targets to avoid repeated allocations and lowercasing.
+const textCache = new WeakMap<object, { text: string; location: string }>();
+
+function getOrCacheItemStrings(item: BrowseItem) {
+  let cached = textCache.get(item);
+  if (!cached) {
+    cached = {
+      text: `${item.listing.title} ${item.listing.summary} ${item.listing.content} ${item.listing.location ?? ''}`.toLowerCase(),
+      location: (item.listing.location ?? '').toLowerCase()
+    };
+    textCache.set(item, cached);
+  }
+  return cached;
 }
 
-function matchesLocation(item: BrowseItem, location: string) {
-  const needle = location.toLowerCase();
-  return (item.listing.location ?? '').toLowerCase().includes(needle);
+function matchesKeyword(item: BrowseItem, lowercaseKeyword: string) {
+  return getOrCacheItemStrings(item).text.includes(lowercaseKeyword);
+}
+
+function matchesLocation(item: BrowseItem, lowercaseLocation: string) {
+  return getOrCacheItemStrings(item).location.includes(lowercaseLocation);
 }
 
 function matchesGeohash(item: BrowseItem, geohashPrefix: string) {
@@ -41,14 +49,14 @@ function matchesGeohash(item: BrowseItem, geohashPrefix: string) {
 // A geocoded location selection sets both `location` (display text) and
 // `geohashPrefix`, but listings often populate only one of `location`/`geohash`.
 // Requiring both would wrongly exclude items that match on just one dimension.
-function matchesLocationFilters(item: BrowseItem, filters: ListingFilters) {
-  if (!filters.location && !filters.geohashPrefix) {
+function matchesLocationFilters(item: BrowseItem, locationFilter: string | undefined, geohashPrefix: string | undefined) {
+  if (!locationFilter && !geohashPrefix) {
     return true;
   }
-  if (filters.location && matchesLocation(item, filters.location)) {
+  if (locationFilter && matchesLocation(item, locationFilter)) {
     return true;
   }
-  if (filters.geohashPrefix && matchesGeohash(item, filters.geohashPrefix)) {
+  if (geohashPrefix && matchesGeohash(item, geohashPrefix)) {
     return true;
   }
   return false;
@@ -66,12 +74,15 @@ function matchesSubcategories(item: BrowseItem, subcategories: string[]) {
 
 export function buildBrowseCounts(items: BrowseItem[], filters: ListingFilters, categoryScope?: string) {
   const filteredItems: BrowseItem[] = [];
+  const keyword = filters.keyword?.toLowerCase();
+  const location = filters.location?.toLowerCase();
+  const geohashPrefix = filters.geohashPrefix;
 
   for (const item of items) {
-    if (filters.keyword && !matchesKeyword(item, filters.keyword)) {
+    if (keyword && !matchesKeyword(item, keyword)) {
       continue;
     }
-    if (!matchesLocationFilters(item, filters)) {
+    if (!matchesLocationFilters(item, location, geohashPrefix)) {
       continue;
     }
     if (categoryScope && !item.listing.categories.includes(categoryScope)) {
