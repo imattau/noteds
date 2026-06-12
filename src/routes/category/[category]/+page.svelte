@@ -51,19 +51,19 @@
     const batch = pendingItems;
     pendingItems = [];
 
-    let next = items;
+    const map = new Map<string, FeedItem>();
+    for (const item of items) {
+      map.set(`${item.listing.id}:${item.pubkey}`, item);
+    }
     for (const item of batch) {
       if (deletedEventIds.includes(item.eventId)) continue;
-      const existingIndex = next.findIndex(
-        (existing) => existing.listing.id === item.listing.id && existing.pubkey === item.pubkey
-      );
-      if (existingIndex === -1) {
-        next = [...next, item];
-      } else if (item.created_at > next[existingIndex].created_at) {
-        next = next.map((existing, index) => (index === existingIndex ? item : existing));
+      const key = `${item.listing.id}:${item.pubkey}`;
+      const existing = map.get(key);
+      if (!existing || item.created_at > existing.created_at) {
+        map.set(key, item);
       }
     }
-    items = next;
+    items = Array.from(map.values());
 
     void cacheBrowseItems(batch);
   }

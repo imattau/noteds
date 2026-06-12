@@ -10,6 +10,8 @@
   import { eventStore, relayPool } from '$lib/nostr/runtime';
   import { collectEvents } from '$lib/nostr/requestEvents';
   import type { NostrEvent } from 'nostr-tools';
+  import { marked } from 'marked';
+  import DOMPurify from 'isomorphic-dompurify';
 
   const LISTING_LOAD_TIMEOUT_MS = 5000;
 
@@ -26,21 +28,12 @@
   let sendResult = $state<'success' | 'error' | null>(null);
   let sendError = $state<string | null>(null);
 
-  function escapeHtml(input: string): string {
-    return input.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  }
-
   function renderMarkdown(md: string): string {
-    let html = escapeHtml(md);
-    html = html.replace(/^# (.+)$/gm, '<h1 class="mb-2 mt-4 text-xl font-semibold">$1</h1>');
-    html = html.replace(/^## (.+)$/gm, '<h2 class="mb-2 mt-3 text-lg font-semibold">$1</h2>');
-    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" class="text-blue-600 underline" target="_blank" rel="noopener noreferrer">$1</a>');
-    return html
-      .split(/\n\s*\n/)
-      .map((block) => `<p class="mb-2">${block.replace(/\n/g, '<br>')}</p>`)
-      .join('');
+    try {
+      return DOMPurify.sanitize(marked.parse(md, { gfm: true, breaks: true }) as string);
+    } catch {
+      return md;
+    }
   }
 
   async function handleSend() {

@@ -231,6 +231,42 @@ export async function searchNominatimLocations(
     .filter((value): value is LocationSuggestion => value !== null);
 }
 
+export function watchLocationSearch(
+  query: string,
+  setState: (state: { suggestions: LocationSuggestion[]; searching: boolean; error: string | null }) => void,
+  options?: { limit?: number }
+): () => void {
+  const trimmed = query.trim();
+  if (!trimmed) {
+    setState({ suggestions: [], searching: false, error: null });
+    return () => {};
+  }
+
+  setState({ suggestions: [], searching: true, error: null });
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    void searchNominatimLocations(trimmed, { limit: options?.limit ?? 5, signal: controller.signal }).then(
+      (results) => {
+        setState({
+          suggestions: results,
+          searching: false,
+          error: results.length === 0 ? 'No matching places found.' : null
+        });
+      },
+      () => {
+        if (controller.signal.aborted) return;
+        setState({ suggestions: [], searching: false, error: 'Could not search for places right now.' });
+      }
+    );
+  }, 300);
+
+  return () => {
+    clearTimeout(timer);
+    controller.abort();
+  };
+}
+
 export async function detectBrowserArea(
   options: { precision?: number; fetchImpl?: typeof fetch } = {}
 ): Promise<BrowserArea | null> {

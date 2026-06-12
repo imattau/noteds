@@ -1,7 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
-  import { detectBrowserArea, getCachedBrowserArea, searchNominatimLocations, type LocationSuggestion } from '$lib/nostr/location';
+  import { detectBrowserArea, getCachedBrowserArea, watchLocationSearch, type LocationSuggestion } from '$lib/nostr/location';
   import type { ListingFilters } from '$lib/nostr/searchParams';
 
   let {
@@ -22,9 +22,6 @@
   let locationSearchError = $state<string | null>(null);
   let searchingLocations = $state(false);
   let autoDetectAttempted = $state(false);
-  let locationSearchTimer: ReturnType<typeof setTimeout> | null = null;
-  let locationSearchRequestId = 0;
-  let locationSearchAbortController: AbortController | null = null;
 
   $effect(() => {
     keywordInput = filters.keyword ?? '';
@@ -33,58 +30,15 @@
   });
 
   $effect(() => {
-    if (locationSearchTimer) {
-      clearTimeout(locationSearchTimer);
-      locationSearchTimer = null;
-    }
-    if (locationSearchAbortController) {
-      locationSearchAbortController.abort();
-      locationSearchAbortController = null;
-    }
-
-    const query = locationInput.trim();
-    if (!query) {
-      locationSuggestions = [];
-      locationSearchError = null;
-      searchingLocations = false;
-      return;
-    }
-
-    const requestId = ++locationSearchRequestId;
-    locationSuggestions = [];
-    locationSearchError = null;
-    searchingLocations = true;
-    const controller = new AbortController();
-    locationSearchAbortController = controller;
-    locationSearchTimer = setTimeout(() => {
-      void searchNominatimLocations(query, { limit: 5, signal: controller.signal }).then(
-        (results) => {
-          if (requestId !== locationSearchRequestId) return;
-          locationSuggestions = results;
-          locationSearchError = results.length === 0 ? 'No matching places found.' : null;
-        },
-        () => {
-          if (requestId !== locationSearchRequestId) return;
-          locationSuggestions = [];
-          locationSearchError = 'Could not search for places right now.';
-        }
-      ).finally(() => {
-        if (requestId === locationSearchRequestId) {
-          searchingLocations = false;
-        }
-      });
-    }, 300);
-
-    return () => {
-      if (locationSearchTimer) {
-        clearTimeout(locationSearchTimer);
-        locationSearchTimer = null;
-      }
-      if (locationSearchAbortController) {
-        locationSearchAbortController.abort();
-        locationSearchAbortController = null;
-      }
-    };
+    return watchLocationSearch(
+      locationInput,
+      (state) => {
+        locationSuggestions = state.suggestions;
+        searchingLocations = state.searching;
+        locationSearchError = state.error;
+      },
+      { limit: 5 }
+    );
   });
 
   $effect(() => {

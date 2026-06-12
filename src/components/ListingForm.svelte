@@ -1,6 +1,6 @@
 <script lang="ts">
   import ImageUploader from './ImageUploader.svelte';
-  import { detectBrowserArea, searchNominatimLocations, type LocationSuggestion } from '$lib/nostr/location';
+  import { detectBrowserArea, watchLocationSearch, type LocationSuggestion } from '$lib/nostr/location';
   import { TOP_LEVEL_CATEGORIES, getSubcategories, type TopLevelCategory } from '$lib/nostr/categories';
   import {
     MAX_LISTING_IMAGES,
@@ -10,6 +10,7 @@
   } from '$lib/nostr/listings';
 
   import { marked } from 'marked';
+  import DOMPurify from 'isomorphic-dompurify';
 
   let {
     initial,
@@ -37,9 +38,6 @@
   let geoError = $state<string | null>(null);
   let draggedImageIndex = $state<number | null>(null);
   let dropTargetIndex = $state<number | null>(null);
-  let locationSearchTimer: ReturnType<typeof setTimeout> | null = null;
-  let locationSearchRequestId = 0;
-  let locationSearchAbortController: AbortController | null = null;
   let submitting = $state(false);
   let pendingAction = $state<'draft' | 'publish' | null>(null);
 
@@ -64,7 +62,7 @@
 
   function renderMarkdown(md: string): string {
     try {
-      return marked.parse(md, { gfm: true, breaks: true }) as string;
+      return DOMPurify.sanitize(marked.parse(md, { gfm: true, breaks: true }) as string);
     } catch {
       return md;
     }
@@ -181,58 +179,15 @@
   }
 
   $effect(() => {
-    if (locationSearchTimer) {
-      clearTimeout(locationSearchTimer);
-      locationSearchTimer = null;
-    }
-    if (locationSearchAbortController) {
-      locationSearchAbortController.abort();
-      locationSearchAbortController = null;
-    }
-
-    const query = locationQuery.trim();
-    if (!query) {
-      locationSuggestions = [];
-      searchingLocations = false;
-      locationSearchError = null;
-      return;
-    }
-
-    const requestId = ++locationSearchRequestId;
-    locationSuggestions = [];
-    locationSearchError = null;
-    searchingLocations = true;
-    const controller = new AbortController();
-    locationSearchAbortController = controller;
-    locationSearchTimer = setTimeout(() => {
-      void searchNominatimLocations(query, { limit: 5, signal: controller.signal }).then(
-        (results) => {
-          if (requestId !== locationSearchRequestId) return;
-          locationSuggestions = results;
-          locationSearchError = results.length === 0 ? 'No matching places found.' : null;
-        },
-        () => {
-          if (requestId !== locationSearchRequestId) return;
-          locationSuggestions = [];
-          locationSearchError = 'Could not search for places right now.';
-        }
-      ).finally(() => {
-        if (requestId === locationSearchRequestId) {
-          searchingLocations = false;
-        }
-      });
-    }, 300);
-
-    return () => {
-      if (locationSearchTimer) {
-        clearTimeout(locationSearchTimer);
-        locationSearchTimer = null;
-      }
-      if (locationSearchAbortController) {
-        locationSearchAbortController.abort();
-        locationSearchAbortController = null;
-      }
-    };
+    return watchLocationSearch(
+      locationQuery,
+      (state) => {
+        locationSuggestions = state.suggestions;
+        searchingLocations = state.searching;
+        locationSearchError = state.error;
+      },
+      { limit: 5 }
+    );
   });
 
   function buildInput(): ListingInput {
