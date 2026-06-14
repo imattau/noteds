@@ -123,7 +123,14 @@
       </div>
     {/if}
 
-    <h1 class="text-2xl font-semibold">{listing.title}</h1>
+    <div class="flex flex-wrap items-center gap-3">
+      <h1 class="text-2xl font-semibold">{listing.title}</h1>
+      {#if listing.status === 'sold'}
+        <span class="rounded bg-amber-100 px-2.5 py-1 text-xs font-bold uppercase tracking-wider text-amber-800">
+          Sold
+        </span>
+      {/if}
+    </div>
     <p class="text-lg font-medium">{listing.price.amount} {listing.price.currency}</p>
 
     {#if listing.location}
@@ -163,10 +170,11 @@
 
     <button
       type="button"
-      class="self-start rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+      class="self-start rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
       onclick={() => (showContactModal = true)}
+      disabled={listing.status === 'sold'}
     >
-      Contact seller
+      {listing.status === 'sold' ? 'Item sold' : 'Contact seller'}
     </button>
 
     {#if showContactModal}

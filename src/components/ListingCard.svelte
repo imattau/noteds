@@ -40,7 +40,14 @@
   {/if}
 
   <div class="flex flex-1 flex-col gap-1 p-3">
-    <h3 class="text-sm font-semibold text-slate-900 sm:text-base">{listing.title}</h3>
+    <div class="flex items-start justify-between gap-2">
+      <h3 class="text-sm font-semibold text-slate-900 sm:text-base">{listing.title}</h3>
+      {#if listing.status === 'sold'}
+        <span class="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800">
+          Sold
+        </span>
+      {/if}
+    </div>
     <p class="text-sm font-medium text-slate-900">{listing.price.amount} {listing.price.currency}</p>
     {#if listing.location}
       <p class="text-xs text-slate-500">{listing.location}</p>
