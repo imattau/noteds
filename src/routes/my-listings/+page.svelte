@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
   import AuthGate from '$components/AuthGate.svelte';
@@ -164,18 +165,22 @@
   $effect(() => {
     const pubkey = $account?.pubkey;
     if (!pubkey) {
-      listings = [];
-      loading = false;
+      untrack(() => {
+        listings = [];
+        loading = false;
+      });
       return;
     }
 
-    const cachedOwned = getCachedOwnedListingIds(pubkey);
-    if (cachedOwned) {
-      // Set to cached ones synchronously if possible to avoid initial loading flash
-      loading = false;
-    }
+    untrack(() => {
+      const cachedOwned = getCachedOwnedListingIds(pubkey);
+      if (cachedOwned) {
+        // Set to cached ones synchronously if possible to avoid initial loading flash
+        loading = false;
+      }
 
-    void reloadListings(pubkey);
+      void reloadListings(pubkey);
+    });
   });
 
   async function startEditing(listing: ListingInput) {

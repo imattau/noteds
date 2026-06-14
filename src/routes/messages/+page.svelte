@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { base } from '$app/paths';
   import AuthGate from '$components/AuthGate.svelte';
   import { account } from '$lib/nostr/signer';
@@ -158,14 +158,16 @@
 
   $effect(() => {
     if ($account?.pubkey) {
-      const cached = getCachedDecryptedDMs($account.pubkey);
-      if (cached.length > 0) {
-        messages = cached;
-        loading = false;
-      } else {
-        loading = true;
-      }
-      void loadData();
+      untrack(() => {
+        const cached = getCachedDecryptedDMs($account.pubkey!);
+        if (cached.length > 0) {
+          messages = cached;
+          loading = false;
+        } else {
+          loading = true;
+        }
+        void loadData();
+      });
     }
   });
 
