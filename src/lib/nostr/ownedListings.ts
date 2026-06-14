@@ -74,7 +74,20 @@ async function loadOwnedListingIdsOnce(pubkey: string): Promise<string[] | null>
   }
 
   const latest = eventStore.getReplaceable(OWNED_LISTINGS_KIND, pubkey, OWNED_LISTINGS_D_TAG);
-  return latest ? decodeOwnedListingIndex(latest.content) : null;
+  if (!latest) return null;
+
+  const trimmed = latest.content.trim();
+  if (trimmed.startsWith('{')) {
+    return decodeOwnedListingIndex(trimmed);
+  }
+
+  try {
+    const decrypted = await signer.nip44.decrypt(pubkey, latest.content);
+    return decodeOwnedListingIndex(decrypted);
+  } catch (error) {
+    console.error('Failed to decrypt owned listing index', error);
+    return [];
+  }
 }
 
 export async function loadOwnedListingIds(pubkey: string): Promise<string[] | null> {
