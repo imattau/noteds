@@ -3,9 +3,9 @@ import { buildDirectMessageEvent, decryptDM } from './dm';
 import type { NostrEvent } from 'nostr-tools';
 
 describe('buildDirectMessageEvent', () => {
-  it('returns a kind 4 event with a p tag for the recipient', () => {
+  it('returns a kind 14 event with a p tag for the recipient', () => {
     const event = buildDirectMessageEvent('recipient-pubkey', 'encrypted-content');
-    expect(event.kind).toBe(4);
+    expect(event.kind).toBe(14);
     expect(event.tags).toContainEqual(['p', 'recipient-pubkey']);
     expect(event.content).toBe('encrypted-content');
   });

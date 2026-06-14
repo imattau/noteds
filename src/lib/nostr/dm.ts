@@ -27,7 +27,7 @@ export function buildDirectMessageEvent(
   ciphertext: string
 ): EventTemplate {
   return {
-    kind: 4,
+    kind: 14,
     created_at: Math.floor(Date.now() / 1000),
     tags: [['p', recipientPubkey]],
     content: ciphertext
@@ -44,7 +44,7 @@ export async function sendDirectMessage(
     text: message
   };
   const plaintext = JSON.stringify(payload);
-  const ciphertext = await signer.nip04.encrypt(recipientPubkey, plaintext);
+  const ciphertext = await signer.nip44.encrypt(recipientPubkey, plaintext);
   const template = buildDirectMessageEvent(recipientPubkey, ciphertext);
   const event = await signer.signEvent(template);
   await relayPool.publish(getActiveRelays(), event);
@@ -57,7 +57,7 @@ export async function decryptDM(event: NostrEvent, userPubkey: string): Promise<
     const peerPubkey = isSender ? recipient : event.pubkey;
     if (!peerPubkey) return null;
 
-    const decryptedRaw = await signer.nip04.decrypt(peerPubkey, event.content);
+    const decryptedRaw = await signer.nip44.decrypt(peerPubkey, event.content);
     let plaintext = decryptedRaw;
     let listingCoordinate: string | undefined = undefined;
     let app: string | undefined = undefined;
@@ -93,8 +93,8 @@ export async function decryptDM(event: NostrEvent, userPubkey: string): Promise<
 export async function fetchDecryptedDMs(userPubkey: string): Promise<DecryptedDM[]> {
   const events = (await collectEvents(
     relayPool.request(getActiveRelays(), [
-      { kinds: [4], authors: [userPubkey] },
-      { kinds: [4], '#p': [userPubkey] }
+      { kinds: [14], authors: [userPubkey] },
+      { kinds: [14], '#p': [userPubkey] }
     ]),
     5000
   )) as NostrEvent[];

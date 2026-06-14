@@ -76,11 +76,20 @@ async function ensureWindowNostrBridge(): Promise<void> {
   await nostrBridgePromise;
 }
 
-async function getNostrSigner(): Promise<NostrSignerLike | null> {
+async function getNostrSigner(prompt = false): Promise<NostrSignerLike | null> {
   if (passkeySignerShim) {
     return passkeySignerShim;
   }
   if (!isBrowser()) {
+    return null;
+  }
+
+  const existingNostr = (window as Window & { nostr?: unknown }).nostr;
+  if (isNip07SignerLike(existingNostr)) {
+    return existingNostr;
+  }
+
+  if (!prompt) {
     return null;
   }
 
@@ -136,8 +145,8 @@ async function updateAccountFromPubkey(pubkey: string | null): Promise<void> {
   }
 }
 
-async function withSigner<T>(fn: (nostr: NostrSignerAdapter) => Promise<T>): Promise<T> {
-  const nostr = await getNostrSigner();
+async function withSigner<T>(fn: (nostr: NostrSignerAdapter) => Promise<T>, prompt = false): Promise<T> {
+  const nostr = await getNostrSigner(prompt);
   if (!nostr) {
     throw new Error('No Nostr signer is available.');
   }
@@ -202,12 +211,12 @@ export const account = readable<NostrUser | null>(null, (set) => {
 
 export const signer = {
   getPublicKey: async (): Promise<string> => {
-    const pubkey = await withSigner((nostr) => nostr.getPublicKey());
+    const pubkey = await withSigner((nostr) => nostr.getPublicKey(), true);
     void updateAccountFromPubkey(pubkey);
     return pubkey;
   },
   signEvent: async (event: EventTemplate): Promise<Event> => {
-    const signed = await withSigner((nostr) => nostr.signEvent(event));
+    const signed = await withSigner((nostr) => nostr.signEvent(event), true);
     void updateAccountFromPubkey(signed.pubkey);
     return signed;
   },
