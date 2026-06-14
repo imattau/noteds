@@ -29,8 +29,13 @@
   let reviewSubmitting = $state(false);
   let reviewResult = $state<'success' | 'error' | null>(null);
   let reviewError = $state<string | null>(null);
+  let listingsTabButton: HTMLButtonElement | null = null;
+  let reviewsTabButton: HTMLButtonElement | null = null;
+  let showIdentity = $state(false);
 
-  const sellerLabel = $derived(seller?.metadata?.display_name || seller?.metadata?.name || data.npub);
+  const sellerLabel = $derived(seller?.metadata?.display_name || seller?.metadata?.name || 'Seller');
+  const sellerIdentity = $derived(data.npub);
+  const sellerContext = $derived(`${sellerLabel}'s listings and reputation`);
   const activeListings = $derived(
     listings.filter((item) => item.listing.status === 'active')
   );
@@ -49,6 +54,42 @@
 
   function reviewStars(rating: number): string {
     return `${rating}/5`;
+  }
+
+  function focusTab(tab: 'listings' | 'reviews') {
+    activeTab = tab;
+    if (tab === 'listings') {
+      listingsTabButton?.focus();
+    } else {
+      reviewsTabButton?.focus();
+    }
+  }
+
+  function handleTabKeydown(event: KeyboardEvent) {
+    if (event.key === 'ArrowRight' || event.key === 'ArrowLeft' || event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+    } else {
+      return;
+    }
+
+    if (event.key === 'Home') {
+      focusTab('listings');
+      return;
+    }
+    if (event.key === 'End') {
+      focusTab('reviews');
+      return;
+    }
+
+    const nextTab =
+      event.key === 'ArrowRight'
+        ? activeTab === 'listings'
+          ? 'reviews'
+          : 'listings'
+        : activeTab === 'listings'
+          ? 'reviews'
+          : 'listings';
+    focusTab(nextTab);
   }
 
   async function loadProfile(pubkey: string) {
@@ -169,46 +210,95 @@
   {/if}
 
   <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-    <div class="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-700 px-6 py-8 text-white">
-      <div class="flex flex-col gap-5 sm:flex-row sm:items-center">
-        {#if seller?.metadata?.picture}
-          <img src={seller.metadata.picture} alt="" class="h-20 w-20 rounded-2xl object-cover ring-2 ring-white/20" />
-        {:else}
-          <div class="flex h-20 w-20 items-center justify-center rounded-2xl bg-white/10 text-xl font-semibold">
-            {initials(sellerLabel)}
-          </div>
-        {/if}
+    <div class="border-b border-slate-200 bg-[radial-gradient(circle_at_top_left,_rgba(15,23,42,0.04),_transparent_36%),linear-gradient(180deg,_#ffffff,_#f8fafc)] px-5 py-5 sm:px-6 sm:py-6">
+      <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+        <div class="flex min-w-0 items-start gap-4">
+          {#if seller?.metadata?.picture}
+            <img src={seller.metadata.picture} alt="" class="h-16 w-16 rounded-2xl object-cover ring-1 ring-slate-200" />
+          {:else}
+            <div class="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-900 text-lg font-semibold text-white">
+              {initials(sellerLabel)}
+            </div>
+          {/if}
 
-        <div class="min-w-0">
-          <p class="text-xs font-semibold uppercase tracking-[0.28em] text-white/70">Seller profile</p>
-          <h1 class="truncate text-3xl font-semibold">{sellerLabel}</h1>
-          <p class="mt-2 break-all text-sm text-white/70">{data.npub}</p>
+          <div class="min-w-0">
+            <p class="text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">Seller profile</p>
+            <h1 class="truncate text-3xl font-semibold tracking-tight text-slate-950">{sellerLabel}</h1>
+            <p class="mt-1 text-sm text-slate-600">{sellerContext}</p>
+            <div class="mt-3 flex flex-wrap gap-2">
+              <span class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600">
+                {activeListings.length} active listings
+              </span>
+              <span class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600">
+                {reviews.length} reviews
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <button
+            type="button"
+            class="flex w-full items-center justify-between gap-3 text-left"
+            onclick={() => (showIdentity = !showIdentity)}
+            aria-expanded={showIdentity}
+            aria-controls="seller-identity-details"
+          >
+            <span>
+              <span class="block text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">Identity</span>
+              <span class="mt-1 block text-sm text-slate-700">{showIdentity ? 'Hide Nostr address' : 'Show Nostr address'}</span>
+            </span>
+            <span class="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+              {showIdentity ? 'Hide' : 'Show'}
+            </span>
+          </button>
+          {#if showIdentity}
+            <p id="seller-identity-details" class="mt-3 break-all text-sm text-slate-700">{sellerIdentity}</p>
+          {/if}
         </div>
       </div>
     </div>
 
     <div class="border-b border-slate-200 bg-slate-50 px-4 py-3">
-      <div class="inline-flex rounded-full bg-white p-1 shadow-sm ring-1 ring-slate-200">
+      <div
+        role="tablist"
+        aria-orientation="horizontal"
+        tabindex="0"
+        class="inline-flex rounded-full bg-white p-1 shadow-sm ring-1 ring-slate-200"
+        onkeydown={handleTabKeydown}
+      >
         <button
           type="button"
+          role="tab"
+          id="seller-listings-tab"
+          aria-controls="seller-listings-panel"
+          aria-selected={activeTab === 'listings'}
+          tabindex={activeTab === 'listings' ? 0 : -1}
+          bind:this={listingsTabButton}
           class={`rounded-full px-4 py-2 text-sm font-medium transition ${
             activeTab === 'listings'
               ? 'bg-slate-900 text-white'
               : 'text-slate-600 hover:text-slate-900'
           }`}
-          onclick={() => (activeTab = 'listings')}
+          onclick={() => focusTab('listings')}
         >
           Listings
           <span class="ml-1 text-xs text-slate-400">({activeListings.length})</span>
         </button>
         <button
           type="button"
+          role="tab"
+          id="seller-reviews-tab"
+          aria-controls="seller-reviews-panel"
+          aria-selected={activeTab === 'reviews'}
+          tabindex={activeTab === 'reviews' ? 0 : -1}
+          bind:this={reviewsTabButton}
           class={`rounded-full px-4 py-2 text-sm font-medium transition ${
             activeTab === 'reviews'
               ? 'bg-slate-900 text-white'
               : 'text-slate-600 hover:text-slate-900'
           }`}
-          onclick={() => (activeTab = 'reviews')}
+          onclick={() => focusTab('reviews')}
         >
           Reviews
           <span class="ml-1 text-xs text-slate-400">({reviews.length})</span>
@@ -220,19 +310,35 @@
       {#if loadingProfile && loadingListings && loadingReviews}
         <p class="text-sm text-slate-500">Loading profile…</p>
       {:else if activeTab === 'listings'}
-        {#if loadingListings}
-          <p class="text-sm text-slate-500">Loading seller listings…</p>
-        {:else if activeListings.length === 0}
-          <p class="text-sm text-slate-500">This seller has no active listings right now.</p>
-        {:else}
-          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {#each activeListings as item (item.listing.id)}
-              <ListingCard listing={item.listing} pubkey={data.pubkey} created_at={item.created_at} />
-            {/each}
-          </div>
-        {/if}
+        <div
+          id="seller-listings-panel"
+          role="tabpanel"
+          aria-labelledby="seller-listings-tab"
+          tabindex="0"
+          class="outline-none"
+        >
+          {#if loadingListings}
+            <p class="text-sm text-slate-500">Loading seller listings…</p>
+          {:else if activeListings.length === 0}
+            <div class="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
+              This seller has no active listings right now.
+            </div>
+          {:else}
+            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {#each activeListings as item (item.listing.id)}
+                <ListingCard listing={item.listing} pubkey={data.pubkey} created_at={item.created_at} />
+              {/each}
+            </div>
+          {/if}
+        </div>
       {:else}
-        <div class="space-y-5">
+        <div
+          id="seller-reviews-panel"
+          role="tabpanel"
+          aria-labelledby="seller-reviews-tab"
+          tabindex="0"
+          class="space-y-5 outline-none"
+        >
           <section class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <div class="flex items-center justify-between gap-3">
               <div>
