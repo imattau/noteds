@@ -90,12 +90,19 @@ async function loadOwnedListingIdsOnce(pubkey: string): Promise<string[] | null>
   }
 }
 
+let cachedOwnedIds: Record<string, string[]> = {};
+
+export function getCachedOwnedListingIds(pubkey: string): string[] | null {
+  return cachedOwnedIds[pubkey] ?? null;
+}
+
 export async function loadOwnedListingIds(pubkey: string): Promise<string[] | null> {
   let lastResult: string[] | null = null;
 
   for (let attempt = 0; attempt < OWNED_LISTINGS_LOAD_RETRY_ATTEMPTS; attempt += 1) {
     lastResult = await loadOwnedListingIdsOnce(pubkey);
     if (lastResult !== null) {
+      cachedOwnedIds[pubkey] = lastResult;
       return lastResult;
     }
 
@@ -109,12 +116,13 @@ export async function loadOwnedListingIds(pubkey: string): Promise<string[] | nu
 
 export async function replaceOwnedListingIds(pubkey: string, ids: string[]): Promise<string[]> {
   const normalized = normalizeIds(ids);
+  cachedOwnedIds[pubkey] = normalized;
   await publishOwnedListingIndex(pubkey, normalized);
   return normalized;
 }
 
 export async function upsertOwnedListingId(pubkey: string, id: string): Promise<string[]> {
-  const existing = (await loadOwnedListingIds(pubkey)) ?? [];
+  const existing = getCachedOwnedListingIds(pubkey) ?? (await loadOwnedListingIds(pubkey)) ?? [];
   if (existing.includes(id)) {
     return existing;
   }
@@ -122,6 +130,7 @@ export async function upsertOwnedListingId(pubkey: string, id: string): Promise<
 }
 
 export async function removeOwnedListingId(pubkey: string, id: string): Promise<string[]> {
-  const existing = (await loadOwnedListingIds(pubkey)) ?? [];
+  const existing = getCachedOwnedListingIds(pubkey) ?? (await loadOwnedListingIds(pubkey)) ?? [];
   return replaceOwnedListingIds(pubkey, existing.filter((entry) => entry !== id));
 }
+

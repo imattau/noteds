@@ -90,6 +90,16 @@ export async function decryptDM(event: NostrEvent, userPubkey: string): Promise<
   }
 }
 
+let decryptedDMCache: Record<string, DecryptedDM[]> = {};
+
+export function getCachedDecryptedDMs(userPubkey: string): DecryptedDM[] {
+  return decryptedDMCache[userPubkey] || [];
+}
+
+export function setCachedDecryptedDMs(userPubkey: string, dms: DecryptedDM[]) {
+  decryptedDMCache[userPubkey] = dms;
+}
+
 export async function fetchDecryptedDMs(userPubkey: string): Promise<DecryptedDM[]> {
   const events = (await collectEvents(
     relayPool.request(getActiveRelays(), [
@@ -99,8 +109,12 @@ export async function fetchDecryptedDMs(userPubkey: string): Promise<DecryptedDM
     5000
   )) as NostrEvent[];
 
-  const decrypted: DecryptedDM[] = [];
+  const cached = getCachedDecryptedDMs(userPubkey);
+  const cachedIds = new Set(cached.map(c => c.id));
+  const decrypted: DecryptedDM[] = [...cached];
+
   for (const event of events) {
+    if (cachedIds.has(event.id)) continue;
     const decryptedEvent = await decryptDM(event, userPubkey);
     if (decryptedEvent) {
       decrypted.push(decryptedEvent);
@@ -108,5 +122,8 @@ export async function fetchDecryptedDMs(userPubkey: string): Promise<DecryptedDM
   }
 
   // Sort newest first
-  return decrypted.sort((a, b) => b.created_at - a.created_at);
+  const sorted = decrypted.sort((a, b) => b.created_at - a.created_at);
+  setCachedDecryptedDMs(userPubkey, sorted);
+  return sorted;
 }
+

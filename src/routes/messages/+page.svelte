@@ -3,7 +3,7 @@
   import { base } from '$app/paths';
   import AuthGate from '$components/AuthGate.svelte';
   import { account } from '$lib/nostr/signer';
-  import { fetchDecryptedDMs, sendDirectMessage, type DecryptedDM } from '$lib/nostr/dm';
+  import { fetchDecryptedDMs, sendDirectMessage, getCachedDecryptedDMs, setCachedDecryptedDMs, type DecryptedDM } from '$lib/nostr/dm';
   import { getCachedBrowseItem } from '$lib/nostr/browseCache';
   import { loadNostrUser, type NostrUser } from '$lib/nostr/metadata';
   import type { ListingInput } from '$lib/nostr/listings';
@@ -80,7 +80,9 @@
 
   async function loadData() {
     if (!$account) return;
-    loading = true;
+    if (messages.length === 0) {
+      loading = true;
+    }
     error = null;
 
     try {
@@ -153,6 +155,13 @@
 
   $effect(() => {
     if ($account?.pubkey) {
+      const cached = getCachedDecryptedDMs($account.pubkey);
+      if (cached.length > 0) {
+        messages = cached;
+        loading = false;
+      } else {
+        loading = true;
+      }
       void loadData();
     }
   });
@@ -181,6 +190,7 @@
       };
 
       messages = [mockEvent, ...messages];
+      setCachedDecryptedDMs($account.pubkey, messages);
       replyText = '';
 
       // Auto scroll to bottom

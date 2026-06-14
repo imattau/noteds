@@ -13,7 +13,8 @@
     OWNED_LISTINGS_LOAD_TIMEOUT_MS,
     removeOwnedListingId,
     replaceOwnedListingIds,
-    upsertOwnedListingId
+    upsertOwnedListingId,
+    getCachedOwnedListingIds
   } from '$lib/nostr/ownedListings';
   import { collectEvents } from '$lib/nostr/requestEvents';
   import { getCachedBrowseItem } from '$lib/nostr/browseCache';
@@ -55,7 +56,30 @@
   }
 
   async function reloadListings(pubkey: string) {
-    loading = true;
+    // 1. Try to load cached listings first to prevent loading flicker
+    const cachedIds = getCachedOwnedListingIds(pubkey);
+    let cachedResult: OwnedListing[] = [];
+    if (cachedIds) {
+      const cachedItems = await Promise.all(
+        cachedIds.map((id) => getCachedBrowseItem(pubkey, id))
+      );
+      for (const item of cachedItems) {
+        if (!item) continue;
+        cachedResult.push({
+          listing: item.listing,
+          created_at: item.created_at,
+          eventId: item.eventId
+        });
+      }
+      if (cachedResult.length > 0) {
+        listings = cachedResult.sort((a, b) => b.created_at - a.created_at);
+        loading = false;
+      }
+    }
+
+    if (listings.length === 0) {
+      loading = true;
+    }
     error = null;
 
     try {
@@ -82,17 +106,17 @@
       const cachedItems = await Promise.all(
         ownedIds.map((id) => getCachedBrowseItem(pubkey, id))
       );
-      const cachedResult: OwnedListing[] = [];
+      const freshCachedResult: OwnedListing[] = [];
       for (const item of cachedItems) {
         if (!item) continue;
-        cachedResult.push({
+        freshCachedResult.push({
           listing: item.listing,
           created_at: item.created_at,
           eventId: item.eventId
         });
       }
-      if (cachedResult.length > 0) {
-        listings = cachedResult.sort((a, b) => b.created_at - a.created_at);
+      if (freshCachedResult.length > 0) {
+        listings = freshCachedResult.sort((a, b) => b.created_at - a.created_at);
         loading = false;
       }
 
@@ -119,7 +143,7 @@
             eventId: canonical.id
           });
         } else {
-          const cached = cachedResult.find((item) => item.listing.id === dTagValue);
+          const cached = freshCachedResult.find((item) => item.listing.id === dTagValue) || cachedResult.find((item) => item.listing.id === dTagValue);
           if (cached) {
             result.push(cached);
           }
@@ -129,7 +153,9 @@
       listings = result.sort((a, b) => b.created_at - a.created_at);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to load your listings.';
-      listings = [];
+      if (listings.length === 0) {
+        listings = [];
+      }
     } finally {
       loading = false;
     }
@@ -141,6 +167,12 @@
       listings = [];
       loading = false;
       return;
+    }
+
+    const cachedOwned = getCachedOwnedListingIds(pubkey);
+    if (cachedOwned) {
+      // Set to cached ones synchronously if possible to avoid initial loading flash
+      loading = false;
     }
 
     void reloadListings(pubkey);
