@@ -12,8 +12,11 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
 
-  // Active chat state
-  let activeThreadId = $state<string | null>(null);
+  import { page } from '$app/state';
+  import { goto } from '$app/navigation';
+
+  // Active chat state derived from URL query parameters to support back button/navigation
+  let activeThreadId = $derived(page.url.searchParams.get('thread'));
   let replyText = $state('');
   let sending = $state(false);
 
@@ -271,7 +274,7 @@
                 type="button"
                 class="w-full flex items-start gap-3 px-4 py-4 text-left transition hover:bg-white {activeThreadId === thread.id ? 'bg-white' : ''}"
                 onclick={() => {
-                  activeThreadId = thread.id;
+                  void goto(`?thread=${encodeURIComponent(thread.id)}`, { replaceState: true, noScroll: true });
                 }}
               >
                 <!-- Avatar -->
@@ -328,7 +331,7 @@
                   type="button"
                   class="md:hidden p-1 rounded-full text-slate-500 hover:bg-slate-100"
                   onclick={() => {
-                    activeThreadId = null;
+                    void goto('?', { replaceState: true, noScroll: true });
                   }}
                   aria-label="Back to threads list"
                 >
