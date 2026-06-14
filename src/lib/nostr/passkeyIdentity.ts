@@ -251,8 +251,14 @@ export function buildPasskeySignerShim(secretKey: Uint8Array): PasskeySignerShim
       decrypt: async (pubkey: string, ciphertext: string) => nip04.decrypt(secretKey, pubkey, ciphertext)
     },
     nip44: {
-      encrypt: async (pubkey: string, plaintext: string) => nip44.encrypt(secretKey, pubkey, plaintext),
-      decrypt: async (pubkey: string, ciphertext: string) => nip44.decrypt(secretKey, pubkey, ciphertext)
+      encrypt: async (pubkey: string, plaintext: string) => {
+        const conversationKey = nip44.getConversationKey(secretKey, pubkey);
+        return nip44.encrypt(plaintext, conversationKey);
+      },
+      decrypt: async (pubkey: string, ciphertext: string) => {
+        const conversationKey = nip44.getConversationKey(secretKey, pubkey);
+        return nip44.decrypt(ciphertext, conversationKey);
+      }
     },
     __notedsPasskey: true
   };
