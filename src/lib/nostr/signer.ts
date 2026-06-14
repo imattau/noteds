@@ -60,6 +60,34 @@ function isNip07SignerLike(nostr: unknown): nostr is NostrSignerLike {
   return typeof candidate.getPublicKey === 'function' && typeof candidate.signEvent === 'function';
 }
 
+let nostrBridgePromise: Promise<void> | null = null;
+
+async function ensureWindowNostrBridge(): Promise<void> {
+  if (typeof window === 'undefined' || (window as any).nostr || hasActivePasskeySession()) {
+    return;
+  }
+
+  if (!nostrBridgePromise) {
+    nostrBridgePromise = new Promise<void>((resolve, reject) => {
+      // Set parameters for fiatjaf/window.nostr.js before loading
+      (window as any).wnjParams = {
+        startHidden: true
+      };
+
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/window.nostr.js/dist/window.nostr.min.js';
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Failed to load window.nostr.js'));
+      document.head.appendChild(script);
+    }).finally(() => {
+      nostrBridgePromise = null;
+    });
+  }
+
+  await nostrBridgePromise;
+}
+
 async function getNostrSigner(): Promise<NostrSignerLike | null> {
   if (passkeySignerShim) {
     return passkeySignerShim;
@@ -67,6 +95,9 @@ async function getNostrSigner(): Promise<NostrSignerLike | null> {
   if (!isBrowser()) {
     return null;
   }
+
+  // Load the window.nostr.js script dynamically if required
+  await ensureWindowNostrBridge();
 
   // Poll for window.nostr to be initialized by browser extensions or window.nostr.js wrapper
   for (let i = 0; i < 30; i++) {
