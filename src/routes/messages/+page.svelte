@@ -248,169 +248,201 @@
   </div>
 
   <AuthGate>
-    {#if loading}
-      <div class="flex h-[400px] items-center justify-center rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <p class="text-sm text-slate-500">Loading your secure messages…</p>
+  {#if loading}
+    <div class="flex h-[400px] items-center justify-center rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <p class="text-sm text-slate-500">Loading your secure messages…</p>
+    </div>
+  {:else if error}
+    <div class="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-center">
+      <p class="text-sm font-medium text-rose-800">{error}</p>
+    </div>
+  {:else if threads.length === 0}
+    <div class="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+      <div class="mx-auto flex max-w-md flex-col items-center text-center">
+        <div class="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-7 w-7">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
+          </svg>
+        </div>
+        <h3 class="mt-4 text-base font-semibold text-slate-950">No conversations yet</h3>
+        <p class="mt-2 text-sm leading-6 text-slate-500">Contact a seller on a listing card to start a thread. New conversations will appear here once the first message arrives.</p>
       </div>
-    {:else if error}
-      <div class="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-center">
-        <p class="text-sm font-medium text-rose-800">{error}</p>
-      </div>
-    {:else if threads.length === 0}
-      <div class="flex h-[300px] flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
-        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="mx-auto h-12 w-12 text-slate-400">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
-        </svg>
-        <h3 class="mt-2 text-sm font-semibold text-slate-900">No conversations</h3>
-        <p class="mt-1 text-sm text-slate-500">Contact a seller on a listing card to start a thread.</p>
-      </div>
-    {:else}
-      <div class="grid grid-cols-1 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm md:grid-cols-3 h-[600px]">
-        
-        <!-- Sidebar: Threads List -->
-        <div class="flex flex-col border-r border-slate-200 bg-slate-50/50 md:col-span-1 {activeThreadId ? 'hidden md:flex' : 'flex'}">
-          <div class="border-b border-slate-200 px-4 py-3 bg-white">
-            <span class="text-xs font-semibold uppercase tracking-wider text-slate-500">Inbox</span>
+    </div>
+  {:else}
+    <div class="grid min-h-[72vh] grid-cols-1 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm lg:grid-cols-[19rem_minmax(0,1fr)]">
+      <aside class="flex flex-col border-b border-slate-200 bg-slate-50/70 lg:border-b-0 lg:border-r">
+        <div class="border-b border-slate-200 bg-white px-4 py-4">
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Inbox</p>
+              <h2 class="mt-1 text-lg font-semibold text-slate-950">Conversations</h2>
+            </div>
+            <span class="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-500">
+              {threads.length}
+            </span>
           </div>
-          <div class="flex-1 overflow-y-auto divide-y divide-slate-100">
+          <p class="mt-2 text-xs leading-5 text-slate-500">Threads are grouped by seller and listing so the context stays attached to the conversation.</p>
+        </div>
+
+        <div class="flex-1 overflow-y-auto p-2">
+          <div class="space-y-2">
             {#each threads as thread (thread.id)}
               <button
                 type="button"
-                class="w-full flex items-start gap-3 px-4 py-4 text-left transition hover:bg-white {activeThreadId === thread.id ? 'bg-white' : ''}"
+                class={`w-full rounded-2xl border px-3 py-3 text-left transition ${
+                  activeThreadId === thread.id
+                    ? 'border-slate-900 bg-white shadow-sm'
+                    : 'border-transparent bg-transparent hover:border-slate-200 hover:bg-white'
+                }`}
                 onclick={() => {
                   void goto(`?thread=${encodeURIComponent(thread.id)}`, { replaceState: true, noScroll: true });
                 }}
               >
-                <!-- Avatar -->
-                <div class="relative flex-shrink-0">
-                  {#if thread.peer?.metadata?.picture}
-                    <img
-                      src={thread.peer.metadata.picture}
-                      alt=""
-                      class="h-10 w-10 rounded-full object-cover ring-1 ring-slate-200"
-                    />
-                  {:else}
-                    <div class="flex h-10 w-10 items-center justify-center rounded-full bg-slate-800 text-xs font-semibold text-white">
-                      {getInitials(thread.peer, thread.peerPubkey)}
-                    </div>
-                  {/if}
-                  {#if thread.unread}
-                    <span class="absolute top-0 right-0 h-3 w-3 rounded-full bg-blue-500 ring-2 ring-white"></span>
-                  {/if}
-                </div>
-
-                <!-- Detail -->
-                <div class="min-w-0 flex-1">
-                  <div class="flex items-center justify-between gap-1">
-                    <span class="truncate text-sm font-semibold text-slate-900">
-                      {thread.peer?.metadata?.display_name || thread.peer?.metadata?.name || thread.peerPubkey.slice(0, 8)}
-                    </span>
-                    <span class="text-[10px] text-slate-400 white-space-nowrap">
-                      {formatDate(thread.lastMessage.created_at)}
-                    </span>
+                <div class="flex items-start gap-3">
+                  <div class="relative flex-shrink-0">
+                    {#if thread.peer?.metadata?.picture}
+                      <img
+                        src={thread.peer.metadata.picture}
+                        alt=""
+                        class="h-11 w-11 rounded-2xl object-cover ring-1 ring-slate-200"
+                      />
+                    {:else}
+                      <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-xs font-semibold text-white">
+                        {getInitials(thread.peer, thread.peerPubkey)}
+                      </div>
+                    {/if}
+                    {#if thread.unread}
+                      <span class="absolute right-0 top-0 h-3 w-3 rounded-full border-2 border-white bg-teal-500"></span>
+                    {/if}
                   </div>
 
-                  {#if thread.listing}
-                    <p class="truncate text-xs font-medium text-slate-500">
-                      🏷️ {thread.listing.title}
-                    </p>
-                  {/if}
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="truncate text-sm font-semibold text-slate-950">
+                        {thread.peer?.metadata?.display_name || thread.peer?.metadata?.name || thread.peerPubkey.slice(0, 8)}
+                      </span>
+                      <span class="shrink-0 text-[10px] text-slate-400 white-space-nowrap">
+                        {formatDate(thread.lastMessage.created_at)}
+                      </span>
+                    </div>
 
-                  <p class="mt-1 truncate text-xs text-slate-600 {thread.unread ? 'font-semibold text-slate-900' : ''}">
-                    {thread.lastMessage.plaintext}
-                  </p>
+                    {#if thread.listing}
+                      <p class="mt-1 truncate text-xs font-medium text-slate-500">
+                        {thread.listing.title}
+                      </p>
+                    {/if}
+
+                    <p class={`mt-2 truncate text-xs ${thread.unread ? 'font-medium text-slate-900' : 'text-slate-600'}`}>
+                      {thread.lastMessage.plaintext}
+                    </p>
+                  </div>
                 </div>
               </button>
             {/each}
           </div>
         </div>
+      </aside>
 
-        <!-- Chat View Pane -->
-        <div class="flex flex-col md:col-span-2 {activeThreadId ? 'flex' : 'hidden md:flex'}">
-          {#if activeThread}
-            <!-- Header -->
-            <div class="flex items-center justify-between border-b border-slate-200 px-4 py-3 bg-white">
-              <div class="flex items-center gap-3">
+      <section class={`flex min-h-0 flex-col ${activeThreadId ? 'flex' : 'hidden lg:flex'}`}>
+        {#if activeThread}
+          <div class="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-4">
+            <div class="flex min-w-0 items-center gap-3">
                 <button
                   type="button"
-                  class="md:hidden p-1 rounded-full text-slate-500 hover:bg-slate-100"
+                  class="rounded-full border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50 lg:hidden"
                   onclick={() => {
                     void goto('?', { replaceState: true, noScroll: true });
                   }}
-                  aria-label="Back to threads list"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="h-6 w-6">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
-                  </svg>
-                </button>
-                <div>
-                  <h3 class="text-sm font-bold text-slate-900">
-                    {activeThread.peer?.metadata?.display_name || activeThread.peer?.metadata?.name || activeThread.peerPubkey.slice(0, 10)}
-                  </h3>
+                aria-label="Back to conversations"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="h-5 w-5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
+                </svg>
+              </button>
+
+              <div class="min-w-0">
+                <h3 class="truncate text-sm font-semibold text-slate-950">
+                  {activeThread.peer?.metadata?.display_name || activeThread.peer?.metadata?.name || activeThread.peerPubkey.slice(0, 10)}
+                </h3>
+                <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                  <span class="rounded-full bg-slate-100 px-2 py-0.5 font-medium">
+                    {activeThread.messages.length} messages
+                  </span>
                   {#if activeThread.listing}
-                    <a href={`${base}/listing/30402:${activeThread.listing.id}`} class="text-xs text-blue-600 font-semibold hover:underline">
-                      View Listing: {activeThread.listing.title}
+                    <a href={`${base}/listing/30402:${activeThread.listing.id}`} class="font-medium text-sky-700 hover:underline">
+                      View listing
                     </a>
                   {/if}
                 </div>
               </div>
             </div>
+          </div>
 
-            <!-- Messages List -->
-            <div
-              id="chat-scroll-container"
-              class="flex-1 overflow-y-auto p-4 bg-slate-50/50 flex flex-col gap-3"
-            >
+          <div
+            id="chat-scroll-container"
+            class="flex-1 overflow-y-auto bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_100%)] px-4 py-4"
+          >
+            <div class="flex flex-col gap-3">
               {#each activeThread.messages as msg (msg.id)}
                 {@const isMine = msg.sender === $account?.pubkey}
-                <div class="flex flex-col {isMine ? 'items-end' : 'items-start'}">
-                  <div class="max-w-[75%] rounded-2xl px-4 py-2 text-sm shadow-sm {isMine ? 'bg-slate-900 text-white rounded-tr-none' : 'bg-white text-slate-800 border border-slate-200 rounded-tl-none'}">
-                    <p class="whitespace-pre-wrap">{msg.plaintext}</p>
+                <div class={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}>
+                  <div
+                    class={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm lg:max-w-[70%] ${
+                      isMine
+                        ? 'rounded-tr-none bg-slate-900 text-white'
+                        : 'rounded-tl-none border border-slate-200 bg-white text-slate-800'
+                    }`}
+                  >
+                    <p class="whitespace-pre-wrap leading-6">{msg.plaintext}</p>
                   </div>
                   <span class="mt-1 text-[10px] text-slate-400">
-                    {formatTime(msg.created_at)}
+                    {isMine ? 'You' : activeThread.peer?.metadata?.display_name || activeThread.peer?.metadata?.name || 'Seller'} · {formatTime(msg.created_at)}
                   </span>
                 </div>
               {/each}
             </div>
+          </div>
 
-            <!-- Reply Box -->
-            <form
-              onsubmit={(e) => {
-                e.preventDefault();
-                void handleSendReply();
-              }}
-              class="border-t border-slate-200 p-4 bg-white flex gap-2"
-            >
+          <form
+            onsubmit={(e) => {
+              e.preventDefault();
+              void handleSendReply();
+            }}
+            class="sticky bottom-0 border-t border-slate-200 bg-white p-4"
+          >
+            <div class="flex gap-2">
               <input
                 type="text"
                 bind:value={replyText}
-                oninput={(e) => replyText = e.currentTarget.value}
+                oninput={(e) => (replyText = e.currentTarget.value)}
                 placeholder="Type a secure message..."
-                class="flex-1 rounded-full border border-slate-300 px-4 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
+                class="flex-1 rounded-full border border-slate-300 px-4 py-2.5 text-sm shadow-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                 disabled={sending}
               />
               <button
                 type="submit"
-                class="rounded-full bg-slate-900 px-5 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+                class="rounded-full bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
                 disabled={sending || !replyText.trim()}
               >
                 {sending ? 'Sending…' : 'Send'}
               </button>
-            </form>
-          {:else}
-            <!-- Empty state -->
-            <div class="flex flex-1 flex-col items-center justify-center bg-slate-50/20 text-center">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="mx-auto h-12 w-12 text-slate-400">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A9 9 0 0 1 12 3v0a9 9 0 0 1 9 9v.75m-.502 8.205A9.003 9.003 0 0 1 12 21a9.003 9.003 0 0 1-8.498-5.795M15 10h.008v.008H15V10Zm-6 0h.008v.008H9V10Zm-3.75 6.75c.9-.24 1.84-.37 2.81-.37.97 0 1.91.13 2.81.37" />
-              </svg>
-              <h3 class="mt-2 text-sm font-semibold text-slate-900">Select a conversation</h3>
-              <p class="mt-1 text-sm text-slate-500">Pick a thread from the list to start messaging.</p>
             </div>
-          {/if}
-        </div>
-
-      </div>
-    {/if}
+          </form>
+        {:else}
+          <div class="flex flex-1 items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(15,23,42,0.04),_transparent_40%),linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] p-8 text-center">
+            <div class="max-w-sm">
+              <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-7 w-7">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A9 9 0 0 1 12 3v0a9 9 0 0 1 9 9v.75m-.502 8.205A9.003 9.003 0 0 1 12 21a9.003 9.003 0 0 1-8.498-5.795M15 10h.008v.008H15V10Zm-6 0h.008v.008H9V10Zm-3.75 6.75c.9-.24 1.84-.37 2.81-.37.97 0 1.91.13 2.81.37" />
+                </svg>
+              </div>
+              <h3 class="mt-4 text-base font-semibold text-slate-950">Select a conversation</h3>
+              <p class="mt-2 text-sm leading-6 text-slate-500">Choose a thread from the inbox to view the listing context and continue the conversation.</p>
+            </div>
+          </div>
+        {/if}
+      </section>
+    </div>
+  {/if}
   </AuthGate>
 </div>

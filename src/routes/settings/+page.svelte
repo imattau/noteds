@@ -28,10 +28,12 @@
   let relays = $state<string[]>(getCustomRelays());
   let newRelayUrl = $state('');
   let relayError = $state<string | null>(null);
+  let relaysOpen = $state(false);
 
   let blossomServers = $state<string[]>(getCustomBlossomServers());
   let newBlossomServer = $state('');
   let blossomError = $state<string | null>(null);
+  let blossomOpen = $state(false);
 
   function refreshPreferences() {
     relays = getCustomRelays();
@@ -199,75 +201,101 @@
   {/if}
 </section>
 
-<section class="mt-4 rounded-lg border border-slate-200 bg-white p-4">
-  <h2 class="text-lg font-semibold">Relays</h2>
-  <p class="mt-1 text-xs text-slate-500">Active relays (your Nostr list when available, otherwise local defaults + custom):</p>
-  <ul class="mt-1 flex flex-col gap-1 text-sm text-slate-700">
-    {#each getActiveRelays() as relay (relay)}
-      <li class="flex items-center justify-between rounded-md border border-slate-100 px-2 py-1">
-        <span>{relay}</span>
-        {#if !DEFAULT_RELAYS.includes(relay)}
-          <button type="button" class="text-xs text-red-600 hover:underline" onclick={() => removeRelay(relay)}>
-            Remove
-          </button>
-        {/if}
-      </li>
-    {/each}
-  </ul>
+<details class="mt-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm" bind:open={relaysOpen}>
+  <summary class="cursor-pointer list-none">
+    <div class="flex items-center justify-between gap-4">
+      <div>
+        <h2 class="text-lg font-semibold">Relays</h2>
+        <p class="mt-1 text-xs text-slate-500">Your relay list stays out of the way until you need to edit it.</p>
+      </div>
+      <span class="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-500">
+        {relaysOpen ? 'Hide' : 'Show'}
+      </span>
+    </div>
+  </summary>
 
-  <div class="mt-3 flex flex-col gap-2 sm:flex-row">
-    <input
-      type="text"
-      placeholder="wss://relay.example.com"
-      class="block w-full rounded-md border-slate-300 shadow-sm sm:max-w-sm sm:text-sm"
-      bind:value={newRelayUrl}
-    />
-    <button
-      type="button"
-      class="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-      onclick={addRelay}
-    >
-      Add relay
-    </button>
+  <div class="pt-4">
+    <p class="text-xs text-slate-500">Active relays (your Nostr list when available, otherwise local defaults + custom):</p>
+    <ul class="mt-2 flex flex-col gap-1 text-sm text-slate-700">
+      {#each getActiveRelays() as relay (relay)}
+        <li class="flex items-center justify-between rounded-md border border-slate-100 px-2 py-1">
+          <span>{relay}</span>
+          {#if !DEFAULT_RELAYS.includes(relay)}
+            <button type="button" class="text-xs text-red-600 hover:underline" onclick={() => removeRelay(relay)}>
+              Remove
+            </button>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+
+    <div class="mt-3 flex flex-col gap-2 sm:flex-row">
+      <input
+        type="text"
+        placeholder="wss://relay.example.com"
+        class="block w-full rounded-md border-slate-300 shadow-sm sm:max-w-sm sm:text-sm"
+        bind:value={newRelayUrl}
+      />
+      <button
+        type="button"
+        class="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        onclick={addRelay}
+      >
+        Add relay
+      </button>
+    </div>
+    {#if relayError}
+      <p class="mt-2 text-sm text-red-600">{relayError}</p>
+    {/if}
   </div>
-  {#if relayError}
-    <p class="mt-2 text-sm text-red-600">{relayError}</p>
-  {/if}
-</section>
+</details>
 
-<section class="mt-4 rounded-lg border border-slate-200 bg-white p-4">
-  <h2 class="text-lg font-semibold">Image uploads (Blossom)</h2>
-  <p class="mt-1 text-xs text-slate-500">Active upload servers (your Nostr preference when available, otherwise local defaults + custom):</p>
-  <ul class="mt-1 flex flex-col gap-1 text-sm text-slate-700">
-    {#each getActiveBlossomServers() as server (server)}
-      <li class="flex items-center justify-between rounded-md border border-slate-100 px-2 py-1">
-        <span class="truncate">{server}</span>
-        {#if !DEFAULT_BLOSSOM_SERVERS.includes(server)}
-          <button type="button" class="text-xs text-red-600 hover:underline" onclick={() => removeBlossomServer(server)}>
-            Remove
-          </button>
-        {/if}
-      </li>
-    {/each}
-  </ul>
+<details class="mt-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm" bind:open={blossomOpen}>
+  <summary class="cursor-pointer list-none">
+    <div class="flex items-center justify-between gap-4">
+      <div>
+        <h2 class="text-lg font-semibold">Image uploads (Blossom)</h2>
+        <p class="mt-1 text-xs text-slate-500">Upload servers are tucked away until you need to change them.</p>
+      </div>
+      <span class="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-500">
+        {blossomOpen ? 'Hide' : 'Show'}
+      </span>
+    </div>
+  </summary>
 
-  <div class="mt-3 flex flex-col gap-2 sm:flex-row">
-    <input
-      id="blossom-server"
-      type="text"
-      placeholder={DEFAULT_BLOSSOM_SERVERS[0]}
-      class="block w-full rounded-md border-slate-300 shadow-sm sm:max-w-sm sm:text-sm"
-      bind:value={newBlossomServer}
-    />
-    <button
-      type="button"
-      class="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-      onclick={addBlossomServer}
-    >
-      Add server
-    </button>
+  <div class="pt-4">
+    <p class="text-xs text-slate-500">Active upload servers (your Nostr preference when available, otherwise local defaults + custom):</p>
+    <ul class="mt-2 flex flex-col gap-1 text-sm text-slate-700">
+      {#each getActiveBlossomServers() as server (server)}
+        <li class="flex items-center justify-between rounded-md border border-slate-100 px-2 py-1">
+          <span class="truncate">{server}</span>
+          {#if !DEFAULT_BLOSSOM_SERVERS.includes(server)}
+            <button type="button" class="text-xs text-red-600 hover:underline" onclick={() => removeBlossomServer(server)}>
+              Remove
+            </button>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+
+    <div class="mt-3 flex flex-col gap-2 sm:flex-row">
+      <input
+        id="blossom-server"
+        type="text"
+        placeholder={DEFAULT_BLOSSOM_SERVERS[0]}
+        class="block w-full rounded-md border-slate-300 shadow-sm sm:max-w-sm sm:text-sm"
+        bind:value={newBlossomServer}
+      />
+      <button
+        type="button"
+        class="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        onclick={addBlossomServer}
+      >
+        Add server
+      </button>
+    </div>
+    {#if blossomError}
+      <p class="mt-2 text-sm text-red-600">{blossomError}</p>
+    {/if}
   </div>
-  {#if blossomError}
-    <p class="mt-2 text-sm text-red-600">{blossomError}</p>
-  {/if}
-</section>
+</details>

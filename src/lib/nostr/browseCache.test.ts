@@ -1,37 +1,50 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const stores = new Map<string, Map<string, unknown>>();
+import type { BrowseItem } from './browseCounts';
 
-vi.mock('idb-keyval', () => {
-  function getStoreMap(storeId: unknown): Map<string, unknown> {
-    const key = typeof storeId === 'string' ? storeId : 'default';
-    let store = stores.get(key);
-    if (!store) {
-      store = new Map();
-      stores.set(key, store);
+const storeItems = new Map<string, BrowseItem>();
+const deletedEventIds = new Set<string>();
+
+function getItemKey(item: BrowseItem): string {
+  return `${item.pubkey}:${item.listing.id}`;
+}
+
+function resetStore() {
+  storeItems.clear();
+  deletedEventIds.clear();
+}
+
+vi.mock('./browseCacheStore', () => ({
+  loadBrowseCacheStore: async () => ({
+    items: Array.from(storeItems.values()).filter((item) => !deletedEventIds.has(item.eventId)),
+    deletedEventIds: Array.from(deletedEventIds)
+  }),
+  upsertBrowseItems: async (items: BrowseItem[]) => {
+    for (const item of items) {
+      storeItems.set(getItemKey(item), item);
+      deletedEventIds.delete(item.eventId);
     }
-    return store;
-  }
-
-  return {
-    createStore: (dbName: string, storeName: string) => `${dbName}:${storeName}`,
-    get: async (key: string, storeId?: unknown) => getStoreMap(storeId).get(key),
-    set: async (key: string, value: unknown, storeId?: unknown) => {
-      getStoreMap(storeId).set(key, value);
-    },
-    getMany: async (keys: string[], storeId?: unknown) => keys.map((key) => getStoreMap(storeId).get(key)),
-    setMany: async (entries: [string, unknown][], storeId?: unknown) => {
-      const store = getStoreMap(storeId);
-      for (const [key, value] of entries) {
-        store.set(key, value);
+  },
+  recordBrowseDeletions: async (eventIds: string[]) => {
+    for (const eventId of eventIds) {
+      deletedEventIds.add(eventId);
+      for (const [itemKey, item] of storeItems.entries()) {
+        if (item.eventId === eventId) {
+          storeItems.delete(itemKey);
+        }
       }
-    },
-    del: async (key: string, storeId?: unknown) => {
-      getStoreMap(storeId).delete(key);
-    },
-    keys: async (storeId?: unknown) => Array.from(getStoreMap(storeId).keys())
-  };
-});
+    }
+  },
+  getBrowseItemFromStore: async (pubkey: string, listingId: string) => {
+    const item = storeItems.get(`${pubkey}:${listingId}`);
+    if (!item || deletedEventIds.has(item.eventId)) {
+      return null;
+    }
+    return item;
+  },
+  queryBrowseCacheKeys: async () => Array.from(storeItems.keys()),
+  resetBrowseCacheStoreForTests: () => resetStore()
+}));
 
 import {
   cacheBrowseDeletions,
@@ -43,7 +56,6 @@ import {
   queryBrowseCache,
   resetBrowseCacheMemoryForTests
 } from './browseCache';
-import type { BrowseItem } from './browseCounts';
 import type { ListingInput } from './listings';
 
 const sampleListing: ListingInput = {
@@ -70,7 +82,7 @@ const sampleItem: BrowseItem = {
 describe('browse cache', () => {
   beforeEach(() => {
     localStorage.clear();
-    stores.clear();
+    resetStore();
     resetBrowseCacheMemoryForTests();
   });
 
