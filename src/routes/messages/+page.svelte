@@ -162,12 +162,10 @@
     sending = true;
 
     try {
-      const extraTags: string[][] = [['client', 'noteds']];
-      if (activeThread.listingCoordinate) {
-        extraTags.push(['a', activeThread.listingCoordinate]);
-      }
-
-      await sendDirectMessage(activeThread.peerPubkey, replyText, extraTags);
+      await sendDirectMessage(activeThread.peerPubkey, replyText, {
+        client: 'noteds',
+        listing: activeThread.listingCoordinate
+      });
 
       // Optimistically insert locally to event list
       const mockEvent: DecryptedDM = {

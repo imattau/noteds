@@ -16,15 +16,20 @@ export interface DecryptedDM {
   tags: string[][];
 }
 
+interface DMContentPayload {
+  client?: string;
+  listing?: string;
+  text: string;
+}
+
 export function buildDirectMessageEvent(
   recipientPubkey: string,
-  ciphertext: string,
-  extraTags: string[][] = []
+  ciphertext: string
 ): EventTemplate {
   return {
     kind: 4,
     created_at: Math.floor(Date.now() / 1000),
-    tags: [['p', recipientPubkey], ...extraTags],
+    tags: [['p', recipientPubkey]],
     content: ciphertext
   };
 }
@@ -32,10 +37,15 @@ export function buildDirectMessageEvent(
 export async function sendDirectMessage(
   recipientPubkey: string,
   message: string,
-  extraTags: string[][] = []
+  metadata?: { client?: string; listing?: string }
 ): Promise<void> {
-  const ciphertext = await signer.nip04.encrypt(recipientPubkey, message);
-  const template = buildDirectMessageEvent(recipientPubkey, ciphertext, extraTags);
+  const payload: DMContentPayload = {
+    ...metadata,
+    text: message
+  };
+  const plaintext = JSON.stringify(payload);
+  const ciphertext = await signer.nip04.encrypt(recipientPubkey, plaintext);
+  const template = buildDirectMessageEvent(recipientPubkey, ciphertext);
   const event = await signer.signEvent(template);
   await relayPool.publish(getActiveRelays(), event);
 }
@@ -47,9 +57,21 @@ export async function decryptDM(event: NostrEvent, userPubkey: string): Promise<
     const peerPubkey = isSender ? recipient : event.pubkey;
     if (!peerPubkey) return null;
 
-    const plaintext = await signer.nip04.decrypt(peerPubkey, event.content);
-    const listingCoordinate = event.tags.find(([t]) => t === 'a')?.[1];
-    const app = event.tags.find(([t]) => t === 'client' || t === 'app')?.[1];
+    const decryptedRaw = await signer.nip04.decrypt(peerPubkey, event.content);
+    let plaintext = decryptedRaw;
+    let listingCoordinate: string | undefined = undefined;
+    let app: string | undefined = undefined;
+
+    try {
+      const parsed = JSON.parse(decryptedRaw) as DMContentPayload;
+      if (parsed && typeof parsed === 'object' && 'text' in parsed) {
+        plaintext = parsed.text;
+        listingCoordinate = parsed.listing;
+        app = parsed.client;
+      }
+    } catch {
+      // Graceful fallback for non-JSON or external client DMs
+    }
 
     return {
       id: event.id,

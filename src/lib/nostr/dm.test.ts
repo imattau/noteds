@@ -15,14 +15,4 @@ describe('buildDirectMessageEvent', () => {
     const event = buildDirectMessageEvent('recipient-pubkey', 'ciphertext');
     expect(event.created_at).toBeGreaterThanOrEqual(before);
   });
-
-  it('includes extra tags if provided', () => {
-    const event = buildDirectMessageEvent('recipient-pubkey', 'ciphertext', [
-      ['client', 'noteds'],
-      ['a', 'coordinate']
-    ]);
-    expect(event.tags).toContainEqual(['p', 'recipient-pubkey']);
-    expect(event.tags).toContainEqual(['client', 'noteds']);
-    expect(event.tags).toContainEqual(['a', 'coordinate']);
-  });
 });

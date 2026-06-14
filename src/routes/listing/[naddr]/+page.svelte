@@ -44,10 +44,10 @@
     sendError = null;
     try {
       const listingCoordinate = `30402:${data.pubkey}:${data.identifier}`;
-      await sendDirectMessage(data.pubkey, messageText, [
-        ['client', 'noteds'],
-        ['a', listingCoordinate]
-      ]);
+      await sendDirectMessage(data.pubkey, messageText, {
+        client: 'noteds',
+        listing: listingCoordinate
+      });
       sendResult = 'success';
       messageText = '';
       setTimeout(() => (showContactModal = false), 1000);
