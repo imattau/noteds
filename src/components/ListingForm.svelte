@@ -51,14 +51,14 @@
     title = initial?.title ?? '';
     summary = initial?.summary ?? '';
     content = initial?.content ?? '';
-    priceAmount = initial?.price.amount ?? '';
-    priceCurrency = initial?.price.currency ?? 'USD';
+    priceAmount = initial?.price?.amount ?? '';
+    priceCurrency = initial?.price?.currency ?? 'USD';
     categories = [...initialCategories, ...missingParents];
     subcategories = initialSubcategories;
     location = initial?.location ?? '';
     locationQuery = initial?.location ?? '';
     geohash = initial?.geohash ?? '';
-    images = initial?.images ? initial.images.map((image) => ({ url: image.url, sources: [...image.sources] })) : [];
+    images = initial?.images ? initial.images.map((image) => ({ url: image.url, sources: image.sources ? [...image.sources] : [image.url] })) : [];
   });
 
   function renderMarkdown(md: string): string {

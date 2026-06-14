@@ -30,7 +30,7 @@
     error = null;
     try {
       if (action === 'draft') {
-        await saveDraft(input);
+        await saveDraft($state.snapshot(input));
         return;
       }
 

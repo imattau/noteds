@@ -147,7 +147,7 @@
   });
 
   async function startEditing(listing: ListingInput) {
-    await saveDraft(listing);
+    await saveDraft($state.snapshot(listing));
     await goto(`${base}/create?draft=${encodeURIComponent(listing.id)}`);
   }
 
