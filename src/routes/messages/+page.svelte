@@ -152,7 +152,9 @@
 
   $effect(() => {
     if (activeThreadId) {
-      markAsRead(activeThreadId);
+      untrack(() => {
+        markAsRead(activeThreadId);
+      });
     }
   });
 
