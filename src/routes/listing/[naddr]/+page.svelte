@@ -191,6 +191,7 @@
               class="mt-2 block w-full rounded-md border-slate-300 shadow-sm sm:text-sm"
               placeholder="Write a message…"
               bind:value={messageText}
+              oninput={(e) => messageText = e.currentTarget.value}
             ></textarea>
             {#if sendResult === 'success'}
               <p class="mt-2 text-sm text-green-600">Message sent!</p>

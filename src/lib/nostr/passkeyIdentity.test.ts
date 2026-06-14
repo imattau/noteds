@@ -67,3 +67,37 @@ describe('isPasskeyShim', () => {
     expect(isPasskeyShim({})).toBe(false);
   });
 });
+
+describe('buildPasskeySignerShim', () => {
+  const { generateSecretKey, getPublicKey } = require('nostr-tools');
+  
+  it('can encrypt and decrypt NIP-04 / NIP-44 messages, and sign events', async () => {
+    const { buildPasskeySignerShim } = await import('./passkeyIdentity');
+    const sk1 = generateSecretKey();
+    const pk1 = getPublicKey(sk1);
+    const shim = buildPasskeySignerShim(sk1);
+
+    const sk2 = generateSecretKey();
+    const pk2 = getPublicKey(sk2);
+
+    expect(await shim.getPublicKey()).toBe(pk1);
+
+    // Test NIP-04
+    const plaintext04 = 'hello secret nip04';
+    const ciphertext04 = await shim.nip04.encrypt(pk2, plaintext04);
+    expect(ciphertext04).toBeDefined();
+    expect(ciphertext04).not.toBe(plaintext04);
+
+    const decrypted04 = await shim.nip04.decrypt(pk2, ciphertext04);
+    expect(decrypted04).toBe(plaintext04);
+
+    // Test NIP-44
+    const plaintext44 = 'hello secret nip44';
+    const ciphertext44 = await shim.nip44.encrypt(pk2, plaintext44);
+    expect(ciphertext44).toBeDefined();
+    expect(ciphertext44).not.toBe(plaintext44);
+
+    const decrypted44 = await shim.nip44.decrypt(pk2, ciphertext44);
+    expect(decrypted44).toBe(plaintext44);
+  });
+});

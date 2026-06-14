@@ -76,6 +76,8 @@ async function ensureWindowNostrBridge(): Promise<void> {
   await nostrBridgePromise;
 }
 
+let passkeyUnlockPromise: Promise<NostrSignerLike | null> | null = null;
+
 async function getNostrSigner(prompt = false): Promise<NostrSignerLike | null> {
   if (passkeySignerShim) {
     return passkeySignerShim;
@@ -86,12 +88,34 @@ async function getNostrSigner(prompt = false): Promise<NostrSignerLike | null> {
 
   const loginMethod = await idbkv.get<string>('noteds:login_method');
   if (loginMethod === 'passkey') {
+    if (prompt) {
+      if (!passkeyUnlockPromise) {
+        passkeyUnlockPromise = (async () => {
+          try {
+            const { unlockPasskeyIdentity } = await import('./passkeyIdentity');
+            const { secretKey, pubkey } = await unlockPasskeyIdentity();
+            await completePasskeySession(secretKey, pubkey);
+            return passkeySignerShim;
+          } catch (error) {
+            console.error('Failed to unlock passkey signer:', error);
+            return null;
+          } finally {
+            passkeyUnlockPromise = null;
+          }
+        })();
+      }
+      return passkeyUnlockPromise;
+    }
     return null;
   }
 
-  const existingNostr = (window as Window & { nostr?: unknown }).nostr;
-  if (isNip07SignerLike(existingNostr)) {
-    return existingNostr;
+  // Poll first to detect browser extensions before loading the window.nostr.js bridge
+  for (let i = 0; i < 10; i++) {
+    const existingNostr = (window as Window & { nostr?: unknown }).nostr;
+    if (isNip07SignerLike(existingNostr)) {
+      return existingNostr;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
 
   if (!prompt) {
@@ -232,15 +256,15 @@ export const signer = {
   },
   nip04: {
     encrypt: async (pubkey: string, plaintext: string): Promise<string> =>
-      withSigner((nostr) => nostr.nip04.encrypt(pubkey, plaintext)),
+      withSigner((nostr) => nostr.nip04.encrypt(pubkey, plaintext), true),
     decrypt: async (pubkey: string, ciphertext: string): Promise<string> =>
-      withSigner((nostr) => nostr.nip04.decrypt(pubkey, ciphertext))
+      withSigner((nostr) => nostr.nip04.decrypt(pubkey, ciphertext), true)
   },
   nip44: {
     encrypt: async (pubkey: string, plaintext: string): Promise<string> =>
-      withSigner((nostr) => nostr.nip44.encrypt(pubkey, plaintext)),
+      withSigner((nostr) => nostr.nip44.encrypt(pubkey, plaintext), true),
     decrypt: async (pubkey: string, ciphertext: string): Promise<string> =>
-      withSigner((nostr) => nostr.nip44.decrypt(pubkey, ciphertext))
+      withSigner((nostr) => nostr.nip44.decrypt(pubkey, ciphertext), true)
   }
 };
 

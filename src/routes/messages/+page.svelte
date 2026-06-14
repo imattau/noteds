@@ -368,6 +368,7 @@
               <input
                 type="text"
                 bind:value={replyText}
+                oninput={(e) => replyText = e.currentTarget.value}
                 placeholder="Type a secure message..."
                 class="flex-1 rounded-full border border-slate-300 px-4 py-2 text-sm focus:border-slate-500 focus:outline-none focus:ring-1 focus:ring-slate-500"
                 disabled={sending}
