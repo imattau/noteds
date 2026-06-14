@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { nip19 } from 'nostr-tools';
+  import { page } from '$app/state';
   import { completePasskeySession, logout, account } from '$lib/nostr/signer';
   import {
     hasStoredPasskeyIdentity,
@@ -36,6 +37,15 @@
     relays = getCustomRelays();
     blossomServers = getCustomBlossomServers();
   }
+
+  let passkeyBtn = $state<HTMLButtonElement | null>(null);
+
+  $effect(() => {
+    if (page.url.searchParams.get('focus') === 'passkey' && passkeyBtn) {
+      passkeyBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      passkeyBtn.focus();
+    }
+  });
 
   async function handlePasskeySubmit() {
     authError = null;
@@ -134,13 +144,13 @@
   <h2 class="text-lg font-semibold">Account</h2>
 
   {#if $account}
-    <div class="mt-2 flex items-center gap-3">
+    <div class="mt-2 flex items-center gap-3 min-w-0">
       {#if $account.metadata?.picture}
-        <img src={$account.metadata.picture} alt="" class="h-10 w-10 rounded-full object-cover" />
+        <img src={$account.metadata.picture} alt="" class="h-10 w-10 rounded-full object-cover shrink-0" />
       {/if}
-      <div>
-        <p class="text-sm font-medium text-slate-900">{$account.metadata?.name || $account.metadata?.display_name || $account.npub}</p>
-        <p class="text-xs text-slate-500">{nip19.npubEncode($account.pubkey)}</p>
+      <div class="min-w-0">
+        <p class="truncate text-sm font-medium text-slate-900">{$account.metadata?.name || $account.metadata?.display_name || $account.npub}</p>
+        <p class="break-all text-xs text-slate-500">{nip19.npubEncode($account.pubkey)}</p>
       </div>
     </div>
     <button
@@ -164,8 +174,9 @@
         bind:value={nsecInput}
       />
       <button
+        bind:this={passkeyBtn}
         type="button"
-        class="self-start rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+        class="self-start rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 focus:ring-4 focus:ring-slate-300 focus:outline-none"
         onclick={handlePasskeySubmit}
         disabled={passkeyBusy}
       >

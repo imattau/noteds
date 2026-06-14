@@ -74,7 +74,7 @@
 
     for (const key of Object.keys(overrides) as (keyof ListingFilters)[]) {
       if (overrides[key] === undefined) {
-        delete next[key];
+        next[key] = undefined;
       }
     }
 

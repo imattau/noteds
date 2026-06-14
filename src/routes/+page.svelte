@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import { base } from '$app/paths';
   import SearchBar from '$components/SearchBar.svelte';
   import { buildBrowseCounts } from '$lib/nostr/browseCounts';
   import { TOP_LEVEL_CATEGORIES } from '$lib/nostr/categories';
@@ -63,13 +64,13 @@
 
   function categoryHref(category: string) {
     const query = page.url.searchParams.toString();
-    return `/category/${encodeURIComponent(category)}${query ? `?${query}` : ''}`;
+    return `${base}/category/${encodeURIComponent(category)}${query ? `?${query}` : ''}`;
   }
 
   function subcategoryHref(parent: string, value: string) {
     const query = new URLSearchParams(page.url.searchParams);
     query.set('sub', `${parent}::${value}`);
-    return `/category/${encodeURIComponent(parent)}?${query.toString()}`;
+    return `${base}/category/${encodeURIComponent(parent)}?${query.toString()}`;
   }
 
   function toggleExpandedCategory(category: string) {
@@ -88,7 +89,24 @@
     )
   );
 
-  let browseData = $derived.by(() => buildBrowseCounts(browseFeed.items, filters));
+  let browseData = $state<{
+    filteredItems: typeof browseFeed.items;
+    selectedItems: typeof browseFeed.items;
+    categoryBrowseEntries: ReturnType<typeof buildBrowseCounts>['categoryBrowseEntries'];
+  }>({
+    filteredItems: [],
+    selectedItems: [],
+    categoryBrowseEntries: []
+  });
+
+  $effect(() => {
+    const items = browseFeed.items;
+    const currentFilters = filters;
+    const timeoutId = setTimeout(() => {
+      browseData = buildBrowseCounts(items, currentFilters);
+    }, 0);
+    return () => clearTimeout(timeoutId);
+  });
   let browseCategories = $derived(
     browseData.categoryBrowseEntries.map((entry, index) => ({
       ...entry,

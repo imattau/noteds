@@ -100,6 +100,16 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Bypass SvelteKit development, Vite dev assets, HMR, and filesystem paths
+  if (
+    url.pathname.includes('/.svelte-kit/') ||
+    url.pathname.includes('/@vite/') ||
+    url.pathname.includes('/@fs/') ||
+    url.searchParams.has('token')
+  ) {
+    return;
+  }
+
   if (request.mode === 'navigate') {
     event.respondWith(networkFirst(request));
     return;

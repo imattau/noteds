@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { base } from '$app/paths';
   import { nip19 } from 'nostr-tools';
   import type { ListingInput } from '$lib/nostr/listings';
 
@@ -27,7 +28,7 @@
 </script>
 
 <a
-  href="/listing/{naddr}"
+  href="{base}/listing/{naddr}"
   class="flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm transition hover:shadow-md"
 >
   {#if listing.images.length > 0}

@@ -27,9 +27,22 @@ export function useBrowseFeed(options: {
   categories: () => string[] | undefined;
   categoryScope?: () => string | undefined;
 }) {
-  const browseCache = loadBrowseCacheSnapshot();
-  let items = $state<FeedItem[]>(browseCache.items);
-  let deletedEventIds = $state<string[]>(browseCache.deletedEventIds);
+  let items = $state<FeedItem[]>([]);
+  let deletedEventIds = $state<string[]>([]);
+  let browseCacheUpdatedAt = 0;
+
+  $effect(() => {
+    const browseCache = loadBrowseCacheSnapshot();
+    untrack(() => {
+      if (items.length === 0) {
+        items = browseCache.items;
+      }
+      if (deletedEventIds.length === 0) {
+        deletedEventIds = browseCache.deletedEventIds;
+      }
+    });
+    browseCacheUpdatedAt = browseCache.updatedAt;
+  });
 
   const FEED_FLUSH_DELAY_MS = 150;
   let pendingItems: FeedItem[] = [];
@@ -81,7 +94,7 @@ export function useBrowseFeed(options: {
     const current = untrack(() => ({
       items,
       deletedEventIds,
-      updatedAt: browseCache.updatedAt
+      updatedAt: browseCacheUpdatedAt
     }));
 
     void queryBrowseCache(

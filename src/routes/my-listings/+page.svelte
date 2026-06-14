@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { base } from '$app/paths';
   import AuthGate from '$components/AuthGate.svelte';
   import { account, signer } from '$lib/nostr/signer';
   import { eventStore, relayPool } from '$lib/nostr/runtime';
@@ -141,7 +142,7 @@
 
   async function startEditing(listing: ListingInput) {
     await saveDraft(listing);
-    await goto(`/create?draft=${encodeURIComponent(listing.id)}`);
+    await goto(`${base}/create?draft=${encodeURIComponent(listing.id)}`);
   }
 
   async function markSold(item: OwnedListing) {

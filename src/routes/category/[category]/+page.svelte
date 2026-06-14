@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import { base } from '$app/paths';
   import { buildBrowseCounts } from '$lib/nostr/browseCounts';
   import ListingCard from '$components/ListingCard.svelte';
   import SearchBar from '$components/SearchBar.svelte';
@@ -62,7 +63,7 @@
   }
 
   function categoryHref() {
-    return `/category/${encodeURIComponent(category)}`;
+    return `${base}/category/${encodeURIComponent(category)}`;
   }
 
   function subcategoryHref(value: string) {
@@ -78,7 +79,25 @@
     return `${categoryHref()}?${params.toString()}`;
   }
 
-  let browseData = $derived.by(() => buildBrowseCounts(browseFeed.items, filters, category));
+  let browseData = $state<{
+    filteredItems: typeof browseFeed.items;
+    selectedItems: typeof browseFeed.items;
+    categoryBrowseEntries: ReturnType<typeof buildBrowseCounts>['categoryBrowseEntries'];
+  }>({
+    filteredItems: [],
+    selectedItems: [],
+    categoryBrowseEntries: []
+  });
+
+  $effect(() => {
+    const items = browseFeed.items;
+    const currentFilters = filters;
+    const currentCategory = category;
+    const timeoutId = setTimeout(() => {
+      browseData = buildBrowseCounts(items, currentFilters, currentCategory);
+    }, 0);
+    return () => clearTimeout(timeoutId);
+  });
   let visibleItems = $derived([...browseData.selectedItems].sort((a, b) => b.created_at - a.created_at));
   let subcategoryCounts = $derived(
     getSubcategories(category).map((value) => ({
@@ -112,7 +131,7 @@
 
   <div class="mt-5 flex flex-wrap gap-2">
     <a
-      href="/"
+      href={base || '/'}
       class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
     >
       All categories

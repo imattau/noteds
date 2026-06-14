@@ -8,6 +8,11 @@ const config = {
     adapter: adapter({
       fallback: 'index.html'
     }),
+    paths: {
+      base: process.env.BASE_PATH !== undefined
+        ? process.env.BASE_PATH
+        : (process.env.GITHUB_ACTIONS === 'true' ? '/noteds' : '')
+    },
     alias: {
       $lib: 'src/lib',
       $components: 'src/components'

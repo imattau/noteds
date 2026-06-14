@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
+  import { base } from '$app/paths';
   import AuthGate from '$components/AuthGate.svelte';
   import ListingForm from '$components/ListingForm.svelte';
   import { deleteDraft, getDraft, saveDraft } from '$lib/nostr/drafts';
@@ -39,7 +40,7 @@
         console.error('Failed to update owned listings index after publish', indexError);
       });
       await deleteDraft(input.id);
-      await goto('/my-listings');
+      await goto(`${base}/my-listings`);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to save listing.';
     }
