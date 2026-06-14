@@ -84,6 +84,11 @@ async function getNostrSigner(prompt = false): Promise<NostrSignerLike | null> {
     return null;
   }
 
+  const loginMethod = await idbkv.get<string>('noteds:login_method');
+  if (loginMethod === 'passkey') {
+    return null;
+  }
+
   const existingNostr = (window as Window & { nostr?: unknown }).nostr;
   if (isNip07SignerLike(existingNostr)) {
     return existingNostr;
@@ -212,6 +217,11 @@ export const account = readable<NostrUser | null>(null, (set) => {
 export const signer = {
   getPublicKey: async (): Promise<string> => {
     const pubkey = await withSigner((nostr) => nostr.getPublicKey(), true);
+    if (passkeySignerShim) {
+      await idbkv.set('noteds:login_method', 'passkey');
+    } else {
+      await idbkv.set('noteds:login_method', 'extension');
+    }
     void updateAccountFromPubkey(pubkey);
     return pubkey;
   },
@@ -238,6 +248,7 @@ export async function completePasskeySession(secretKey: Uint8Array, pubkey: stri
   if (!isBrowser()) return;
   passkeySignerShim = buildPasskeySignerShim(secretKey);
   (window as Window & { nostr?: unknown }).nostr = passkeySignerShim;
+  await idbkv.set('noteds:login_method', 'passkey');
   await updateAccountFromPubkey(pubkey);
 }
 
@@ -248,5 +259,6 @@ export async function logout(): Promise<void> {
   if (isPasskeyShim((window as Window & { nostr?: unknown }).nostr)) {
     delete (window as Window & { nostr?: unknown }).nostr;
   }
+  await idbkv.del('noteds:login_method');
   await updateAccountFromPubkey(null);
 }
