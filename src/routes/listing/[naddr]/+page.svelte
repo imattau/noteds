@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { base } from '$app/paths';
+  import { nip19 } from 'nostr-tools';
   import { loadNostrUser, type NostrUser } from '$lib/nostr/metadata';
   import { fade, scale } from 'svelte/transition';
   import AuthGate from '$components/AuthGate.svelte';
@@ -164,12 +166,16 @@
     </div>
 
     {#if seller}
-      <div class="flex items-center gap-2 rounded-lg border border-slate-200 p-3">
+      <a
+        href={`${base}/profile/${nip19.npubEncode(data.pubkey)}`}
+        class="flex items-center gap-2 rounded-lg border border-slate-200 p-3 transition hover:border-slate-300 hover:bg-slate-50"
+      >
         {#if seller.metadata?.picture}
           <img src={seller.metadata.picture} alt="" class="h-8 w-8 rounded-full object-cover" />
         {/if}
         <span class="text-sm text-slate-700">{seller.metadata?.name || seller.metadata?.display_name || 'Seller'}</span>
-      </div>
+        <span class="ml-auto text-xs text-slate-400">View profile</span>
+      </a>
     {/if}
 
     <button
