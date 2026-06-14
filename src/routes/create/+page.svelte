@@ -8,8 +8,9 @@
   import { upsertOwnedListingId } from '$lib/nostr/ownedListings';
   import { buildListingEvent, type ListingInput } from '$lib/nostr/listings';
   import { getActiveRelays } from '$lib/nostr/relays';
-  import { relayPool } from '$lib/nostr/runtime';
+  import { relayPool, eventStore } from '$lib/nostr/runtime';
   import { signer } from '$lib/nostr/signer';
+  import { cacheBrowseItem } from '$lib/nostr/browseCache';
 
   let error = $state<string | null>(null);
   let initial = $state<ListingInput | undefined>(undefined);
@@ -36,6 +37,20 @@
       const template = buildListingEvent(input, false);
       const event = await signer.signEvent(template);
       await relayPool.publish(getActiveRelays(), event);
+
+      // Store in memory eventStore immediately
+      eventStore.add(event);
+
+      // Cache locally to browse database so it is instantly available
+      void cacheBrowseItem({
+        listing: input,
+        created_at: event.created_at,
+        eventId: event.id,
+        pubkey: event.pubkey
+      }).catch((cacheError) => {
+        console.error('Failed to cache published listing locally', cacheError);
+      });
+
       void upsertOwnedListingId(event.pubkey, input.id).catch((indexError) => {
         console.error('Failed to update owned listings index after publish', indexError);
       });

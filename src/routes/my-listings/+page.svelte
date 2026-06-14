@@ -112,12 +112,18 @@
       const result: OwnedListing[] = [];
       for (const dTagValue of ownedSet) {
         const canonical = eventStore.getReplaceable(30402, pubkey, dTagValue);
-        if (!canonical) continue;
-        result.push({
-          listing: parseListingEvent(canonical),
-          created_at: canonical.created_at,
-          eventId: canonical.id
-        });
+        if (canonical) {
+          result.push({
+            listing: parseListingEvent(canonical),
+            created_at: canonical.created_at,
+            eventId: canonical.id
+          });
+        } else {
+          const cached = cachedResult.find((item) => item.listing.id === dTagValue);
+          if (cached) {
+            result.push(cached);
+          }
+        }
       }
 
       listings = result.sort((a, b) => b.created_at - a.created_at);
