@@ -30,9 +30,6 @@ interface NostrSignerAdapter extends NostrSignerLike {
   };
 }
 
-const PASSKEY_SESSION_NSEC_KEY = 'noteds:passkey_session_nsec';
-const PASSKEY_SESSION_PUBKEY_KEY = 'noteds:passkey_session_pubkey';
-
 let passkeySignerShim: PasskeySignerShim | null = null;
 let restoredPasskeyPubkey: string | null = null;
 let hydratedPreferencesPubkey: string | null = null;
@@ -42,16 +39,7 @@ function isBrowser(): boolean {
 }
 
 function hasActivePasskeySession(): boolean {
-  if (passkeySignerShim) {
-    return true;
-  }
-  if (!isBrowser()) {
-    return false;
-  }
-  return (
-    sessionStorage.getItem(PASSKEY_SESSION_NSEC_KEY) !== null &&
-    sessionStorage.getItem(PASSKEY_SESSION_PUBKEY_KEY) !== null
-  );
+  return passkeySignerShim !== null;
 }
 
 function isNip07SignerLike(nostr: unknown): nostr is NostrSignerLike {
@@ -239,8 +227,6 @@ export const signer = {
 
 export async function completePasskeySession(secretKey: Uint8Array, pubkey: string): Promise<void> {
   if (!isBrowser()) return;
-  sessionStorage.setItem(PASSKEY_SESSION_NSEC_KEY, bytesToHex(secretKey));
-  sessionStorage.setItem(PASSKEY_SESSION_PUBKEY_KEY, pubkey);
   passkeySignerShim = buildPasskeySignerShim(secretKey);
   (window as Window & { nostr?: unknown }).nostr = passkeySignerShim;
   await updateAccountFromPubkey(pubkey);
@@ -248,29 +234,10 @@ export async function completePasskeySession(secretKey: Uint8Array, pubkey: stri
 
 export async function logout(): Promise<void> {
   if (!isBrowser()) return;
-  sessionStorage.removeItem(PASSKEY_SESSION_NSEC_KEY);
-  sessionStorage.removeItem(PASSKEY_SESSION_PUBKEY_KEY);
   passkeySignerShim = null;
   hydratedPreferencesPubkey = null;
   if (isPasskeyShim((window as Window & { nostr?: unknown }).nostr)) {
     delete (window as Window & { nostr?: unknown }).nostr;
   }
   await updateAccountFromPubkey(null);
-}
-
-// Restore stored passkey session if available
-if (isBrowser()) {
-  const sessionNsec = sessionStorage.getItem(PASSKEY_SESSION_NSEC_KEY);
-  if (sessionNsec) {
-    try {
-      const secretKey = hexToBytes(sessionNsec);
-      passkeySignerShim = buildPasskeySignerShim(secretKey);
-      (window as Window & { nostr?: unknown }).nostr = passkeySignerShim;
-      restoredPasskeyPubkey = sessionStorage.getItem(PASSKEY_SESSION_PUBKEY_KEY);
-    } catch (error) {
-      sessionStorage.removeItem(PASSKEY_SESSION_NSEC_KEY);
-      sessionStorage.removeItem(PASSKEY_SESSION_PUBKEY_KEY);
-      console.error('Failed to restore passkey session', error);
-    }
-  }
 }
