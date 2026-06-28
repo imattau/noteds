@@ -108,7 +108,7 @@
     passkeyLoading = true;
     authError = null;
     try {
-      const [{ completePasskeySession }, { unlockPasskeyIdentity, hasStoredPasskeyIdentity }] = await Promise.all([
+      const [{ completePasskeySession }, { unlockPasskeyIdentityForApp, hasStoredPasskeyIdentity }] = await Promise.all([
         import('$lib/nostr/signer'),
         import('$lib/nostr/passkeyIdentity')
       ]);
@@ -119,7 +119,7 @@
         return;
       }
 
-      const { secretKey, pubkey } = await unlockPasskeyIdentity();
+      const { secretKey, pubkey } = await unlockPasskeyIdentityForApp();
       await completePasskeySession(secretKey, pubkey);
     } catch (error) {
       authError = error instanceof Error ? error.message : 'Failed to unlock the passkey.';

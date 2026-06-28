@@ -5,9 +5,9 @@
   import { completePasskeySession, logout, account } from '$lib/nostr/signer';
   import {
     hasStoredPasskeyIdentity,
-    importPasskeyIdentityFromNsec,
-    registerPasskeyIdentity,
-    unlockPasskeyIdentity
+    importPasskeyIdentityFromNsecForApp,
+    registerPasskeyIdentityForApp,
+    unlockPasskeyIdentityForApp
   } from '$lib/nostr/passkeyIdentity';
   import { sanitizeRelayUrl } from '$lib/nostr/security';
   import {
@@ -56,10 +56,10 @@
       const trimmed = nsecInput.trim();
       const hasInput = trimmed.length > 0;
       const { secretKey, pubkey } = hasInput
-        ? await importPasskeyIdentityFromNsec(trimmed)
+        ? await importPasskeyIdentityFromNsecForApp(trimmed)
         : hasPasskey
-          ? await unlockPasskeyIdentity()
-          : await registerPasskeyIdentity();
+          ? await unlockPasskeyIdentityForApp()
+          : await registerPasskeyIdentityForApp();
 
       await completePasskeySession(secretKey, pubkey);
       if (hasInput) {

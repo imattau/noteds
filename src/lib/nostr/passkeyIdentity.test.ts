@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  arrayBufferToBase64Url,
-  base64UrlToArrayBuffer,
   bytesToHex,
   hexToBytes,
-  isPasskeyShim
+  isPasskeyShim,
+  buildPasskeySignerShim
 } from './passkeyIdentity';
 
 describe('bytesToHex / hexToBytes', () => {
@@ -28,51 +27,31 @@ describe('bytesToHex / hexToBytes', () => {
   });
 });
 
-describe('arrayBufferToBase64Url / base64UrlToArrayBuffer', () => {
-  it('round-trips a buffer with no padding needed (length % 3 === 0)', () => {
-    const bytes = new Uint8Array([1, 2, 3, 4, 5, 6]);
-    const encoded = arrayBufferToBase64Url(bytes.buffer);
-    expect(encoded).not.toMatch(/[+/=]/);
-    expect(new Uint8Array(base64UrlToArrayBuffer(encoded))).toEqual(bytes);
-  });
-
-  it('round-trips a buffer needing one padding char (length % 3 === 2)', () => {
-    const bytes = new Uint8Array([1, 2, 3, 4, 5]);
-    const encoded = arrayBufferToBase64Url(bytes.buffer);
-    expect(new Uint8Array(base64UrlToArrayBuffer(encoded))).toEqual(bytes);
-  });
-
-  it('round-trips a buffer needing two padding chars (length % 3 === 1)', () => {
-    const bytes = new Uint8Array([1, 2, 3, 4]);
-    const encoded = arrayBufferToBase64Url(bytes.buffer);
-    expect(new Uint8Array(base64UrlToArrayBuffer(encoded))).toEqual(bytes);
-  });
-
-  it('round-trips an empty buffer', () => {
-    const bytes = new Uint8Array([]);
-    const encoded = arrayBufferToBase64Url(bytes.buffer);
-    expect(new Uint8Array(base64UrlToArrayBuffer(encoded))).toEqual(bytes);
-  });
-
-  it('round-trips a 32-byte buffer (typical PRF key length)', () => {
-    const bytes = new Uint8Array(32).map((_, i) => (i * 7) % 256);
-    const encoded = arrayBufferToBase64Url(bytes.buffer);
-    expect(new Uint8Array(base64UrlToArrayBuffer(encoded))).toEqual(bytes);
-  });
-});
-
 describe('isPasskeyShim', () => {
-  it('detects the passkey shim marker', () => {
-    expect(isPasskeyShim({ __notedsPasskey: true })).toBe(true);
+  it('detects a real passkey shim created by buildPasskeySignerShim', () => {
+    const { generateSecretKey } = require('nostr-tools');
+    const sk = generateSecretKey();
+    const shim = buildPasskeySignerShim(sk);
+    expect(isPasskeyShim(shim)).toBe(true);
+  });
+
+  it('rejects plain objects', () => {
     expect(isPasskeyShim({})).toBe(false);
+    // The old __notedsPasskey brand no longer works; library uses Symbol.for('nostr-passkey')
+    expect(isPasskeyShim({ __notedsPasskey: true })).toBe(false);
+  });
+
+  it('rejects null and primitives', () => {
+    expect(isPasskeyShim(null)).toBe(false);
+    expect(isPasskeyShim(undefined)).toBe(false);
+    expect(isPasskeyShim('string')).toBe(false);
   });
 });
 
 describe('buildPasskeySignerShim', () => {
   const { generateSecretKey, getPublicKey } = require('nostr-tools');
-  
+
   it('can encrypt and decrypt NIP-04 / NIP-44 messages, and sign events', async () => {
-    const { buildPasskeySignerShim } = await import('./passkeyIdentity');
     const sk1 = generateSecretKey();
     const pk1 = getPublicKey(sk1);
     const shim = buildPasskeySignerShim(sk1);
@@ -99,5 +78,12 @@ describe('buildPasskeySignerShim', () => {
 
     const decrypted44 = await shim.nip44.decrypt(pk2, ciphertext44);
     expect(decrypted44).toBe(plaintext44);
+  });
+
+  it('destroy() zeros the key and causes subsequent calls to throw', async () => {
+    const sk = generateSecretKey();
+    const shim = buildPasskeySignerShim(sk);
+    shim.destroy();
+    await expect(shim.getPublicKey()).rejects.toThrow('destroyed');
   });
 });

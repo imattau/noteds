@@ -2,7 +2,7 @@ import * as idbkv from 'idb-keyval';
 import { readable } from 'svelte/store';
 import { loadNostrUser, type NostrUser } from './metadata';
 import type { Event, EventTemplate } from 'nostr-tools';
-import { bytesToHex, buildPasskeySignerShim, hexToBytes, isPasskeyShim } from './passkeyIdentity';
+import { buildPasskeySignerShim, isPasskeyShim } from './passkeyIdentity';
 import type { PasskeySignerShim } from './passkeyIdentity';
 
 interface NostrSignerLike {
@@ -16,7 +16,6 @@ interface NostrSignerLike {
     encrypt: (pubkey: string, plaintext: string) => Promise<string>;
     decrypt: (pubkey: string, ciphertext: string) => Promise<string>;
   };
-  __notedsPasskey?: true;
 }
 
 interface NostrSignerAdapter extends NostrSignerLike {
@@ -278,7 +277,10 @@ export async function completePasskeySession(secretKey: Uint8Array, pubkey: stri
 
 export async function logout(): Promise<void> {
   if (!isBrowser()) return;
-  passkeySignerShim = null;
+  if (passkeySignerShim) {
+    passkeySignerShim.destroy();
+    passkeySignerShim = null;
+  }
   hydratedPreferencesPubkey = null;
   if (isPasskeyShim((window as Window & { nostr?: unknown }).nostr)) {
     delete (window as Window & { nostr?: unknown }).nostr;
