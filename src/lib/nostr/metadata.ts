@@ -1,6 +1,5 @@
 import { nip19 } from 'nostr-tools';
 import type { NostrEvent } from 'nostr-tools';
-import { getProfileContent } from 'applesauce-core/helpers';
 import { getActiveRelays } from './relays';
 import { collectEvents } from './requestEvents';
 import { eventStore, relayPool } from './runtime';
@@ -103,4 +102,3 @@ export async function loadNostrUser(pubkey: string): Promise<NostrUser> {
   storeCachedUser(user);
   return user;
 }
-

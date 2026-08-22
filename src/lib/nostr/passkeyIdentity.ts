@@ -6,17 +6,8 @@
  * in this codebase.
  */
 import {
-  buildPasskeySignerShim,
-  bytesToHex,
   clearPasskeyIdentity,
-  exportPasskeyIdentityAsNsec,
-  getStoredPasskeyPubkey,
-  hasStoredPasskeyIdentity,
-  hexToBytes,
   importPasskeyIdentityFromNsec,
-  isPRFSupported,
-  isPasskeyShim,
-  readStoredPasskeyIdentity,
   registerPasskeyIdentity,
   unlockPasskeyIdentity as unlockPasskeyIdentityFromLibrary
 } from 'nostr-passkey';
@@ -41,7 +32,7 @@ export {
   isPasskeyShim,
   isPRFSupported,
   readStoredPasskeyIdentity
-};
+} from 'nostr-passkey';
 
 /** App-wide options passed to every nostr-passkey call. */
 const APP_OPTIONS = {
