@@ -2,6 +2,7 @@ import type { BrowseItem } from './browseCounts';
 import type { ListingFilters } from './searchParams';
 import {
   getBrowseItemFromStore,
+  loadLegacyBrowseCacheStore,
   loadBrowseCacheStore,
   queryBrowseCacheKeys,
   recordBrowseDeletions,
@@ -174,10 +175,43 @@ export async function loadBrowseCache(): Promise<BrowseCacheRecord> {
     MAX_CACHED_ITEMS
   );
 
-  memoryCache =
-    normalizedIndexed.items.length > 0 || normalizedIndexed.deletedEventIds.length > 0
-      ? normalizedIndexed
-      : readSnapshot();
+  if (normalizedIndexed.items.length > 0 || normalizedIndexed.deletedEventIds.length > 0) {
+    memoryCache = normalizedIndexed;
+    return memoryCache;
+  }
+
+  const legacySnapshot = readSnapshot();
+  if (legacySnapshot.items.length > 0 || legacySnapshot.deletedEventIds.length > 0) {
+    // One-time migration from the pre-Polypack localStorage snapshot. The graph
+    // store remains authoritative after this write; keeping the old snapshot
+    // intact makes interrupted migrations recoverable.
+    try {
+      await upsertBrowseItems(legacySnapshot.items);
+      await recordBrowseDeletions(legacySnapshot.deletedEventIds);
+    } catch (error) {
+      console.warn('Browse cache graph migration unavailable; using legacy snapshot.', error);
+    }
+    memoryCache = legacySnapshot;
+    return memoryCache;
+  }
+
+  const legacyIndexedDb = await loadLegacyBrowseCacheStore();
+  if (legacyIndexedDb.items.length > 0 || legacyIndexedDb.deletedEventIds.length > 0) {
+    try {
+      await upsertBrowseItems(legacyIndexedDb.items);
+      await recordBrowseDeletions(legacyIndexedDb.deletedEventIds);
+    } catch (error) {
+      console.warn('Legacy browse cache migration unavailable; using imported records in memory.', error);
+    }
+    memoryCache = normalizeBrowseCache({
+      items: legacyIndexedDb.items,
+      deletedEventIds: legacyIndexedDb.deletedEventIds,
+      updatedAt: Date.now()
+    });
+    return memoryCache;
+  }
+
+  memoryCache = normalizedIndexed;
   return memoryCache;
 }
 

@@ -2,6 +2,8 @@ import { getActiveRelays } from './relays';
 import { collectEvents } from './requestEvents';
 import { eventStore, relayPool } from './runtime';
 import { parseListingEvent, type ListingInput } from './listings';
+import { cacheBrowseItems } from './browseCache';
+import { queryBrowseItemsBySeller } from './browseCacheStore';
 
 export const AUTHORED_LISTINGS_LOAD_TIMEOUT_MS = 5000;
 
@@ -12,6 +14,17 @@ export interface AuthoredListing {
 }
 
 export async function loadAuthoredListings(pubkey: string): Promise<AuthoredListing[]> {
+  let cached: AuthoredListing[] = [];
+  try {
+    cached = (await queryBrowseItemsBySeller(pubkey)).map((item) => ({
+      listing: item.listing,
+      created_at: item.created_at,
+      eventId: item.eventId
+    }));
+  } catch {
+    // Relay data remains the source of truth when local graph storage is unavailable.
+  }
+
   const events = await collectEvents(
     relayPool.request(getActiveRelays(), {
       kinds: [30402],
@@ -37,5 +50,17 @@ export async function loadAuthoredListings(pubkey: string): Promise<AuthoredList
     });
   }
 
-  return result.sort((a, b) => b.created_at - a.created_at);
+  const sorted = result.sort((a, b) => b.created_at - a.created_at);
+  if (sorted.length > 0) {
+    void cacheBrowseItems(
+      sorted.map((item) => ({
+        listing: item.listing,
+        pubkey,
+        created_at: item.created_at,
+        eventId: item.eventId
+      }))
+    );
+    return sorted;
+  }
+  return cached.sort((a, b) => b.created_at - a.created_at);
 }

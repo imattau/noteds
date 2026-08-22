@@ -18,7 +18,7 @@ import {
   isPasskeyShim,
   readStoredPasskeyIdentity,
   registerPasskeyIdentity,
-  unlockPasskeyIdentity
+  unlockPasskeyIdentity as unlockPasskeyIdentityFromLibrary
 } from 'nostr-passkey';
 
 export type {
@@ -64,5 +64,10 @@ export async function importPasskeyIdentityFromNsecForApp(nsec: string) {
 }
 
 export async function unlockPasskeyIdentityForApp() {
-  return unlockPasskeyIdentity(undefined, APP_OPTIONS);
+  return unlockPasskeyIdentityFromLibrary(undefined, APP_OPTIONS);
+}
+
+/** Backwards-compatible app-configured name used by the signer layer. */
+export async function unlockPasskeyIdentity() {
+  return unlockPasskeyIdentityForApp();
 }
