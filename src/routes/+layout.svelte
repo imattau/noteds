@@ -16,6 +16,9 @@
 
   onMount(() => {
     let disposed = false;
+    void import('$lib/nostr/browserEmbedding').then(({ enableBrowserSemanticSearch }) => {
+      if (!disposed) void enableBrowserSemanticSearch();
+    });
     void import('$lib/nostr/signer').then(({ account: accountStore }) => {
       if (disposed) {
         return;

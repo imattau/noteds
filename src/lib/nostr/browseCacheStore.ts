@@ -32,7 +32,7 @@ const DEFAULT_EMBEDDING_VERSION = 'feature-hash-384-v1';
 export interface BrowseEmbeddingProvider {
   readonly version: string;
   readonly dimensions: number;
-  embed(text: string): Float64Array;
+  embed(text: string): Float64Array | Promise<Float64Array>;
 }
 
 const defaultListingEmbedding = new FeatureHashEmbedding({ dimensions: 384 });
@@ -158,12 +158,12 @@ function embeddingTextHash(text: string): string {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-function listingEmbeddingMetadata(item: BrowseItem) {
+async function listingEmbeddingMetadata(item: BrowseItem) {
   const text = embeddingTextForItem(item);
   return {
     embeddingVersion: listingEmbedding.version,
     embeddingTextHash: embeddingTextHash(text),
-    vector: listingEmbedding.embed(text)
+    vector: new Float64Array(await listingEmbedding.embed(text))
   };
 }
 
@@ -184,7 +184,7 @@ async function backfillListingEmbeddings(instance: PolyGraph): Promise<void> {
       continue;
     }
     await instance.getNodeSafe(node.id);
-    const embedding = listingEmbeddingMetadata(item);
+    const embedding = await listingEmbeddingMetadata(item);
     instance.updateNode(node.id, {
       ...data,
       embeddingVersion: embedding.embeddingVersion,
@@ -193,6 +193,13 @@ async function backfillListingEmbeddings(instance: PolyGraph): Promise<void> {
     changed = true;
   }
   if (changed) await instance.flush();
+}
+
+/** Rebuild persisted listing vectors after an embedding provider becomes ready. */
+export async function reindexBrowseEmbeddings(): Promise<void> {
+  await enqueueWrite(async () => {
+    await backfillListingEmbeddings(await getGraph());
+  });
 }
 
 async function getGraph(): Promise<PolyGraph> {
@@ -351,6 +358,7 @@ export async function upsertBrowseItems(items: BrowseItem[]): Promise<void> {
   if (items.length === 0) return;
   await enqueueWrite(async () => {
     const instance = await getGraph();
+    const embeddings = await Promise.all(items.map(async (item) => [item, await listingEmbeddingMetadata(item)] as const));
     const edgeIds = new Map<string, string[]>();
     for (const item of items) {
       const id = listingNodeId(item);
@@ -359,11 +367,10 @@ export async function upsertBrowseItems(items: BrowseItem[]): Promise<void> {
     }
 
     await instance.transaction((tx) => {
-      for (const item of items) {
+      for (const [item, embedding] of embeddings) {
         const id = listingNodeId(item);
         const existing = tx.getNode(id);
         for (const relationId of edgeIds.get(id) ?? []) tx.removeEdge(relationId);
-        const embedding = listingEmbeddingMetadata(item);
         tx.addNode({
           id,
           type: LISTING_NODE_TYPE,
@@ -541,7 +548,7 @@ export async function queryHybridBrowseItems(
   const nodes = await query.toArray();
   const keyword = filters.keyword?.trim() ?? '';
   const queryVector = keyword.length > 0
-    ? listingEmbedding.embed(buildEmbeddingText({ query: keyword }))
+    ? new Float64Array(await listingEmbedding.embed(buildEmbeddingText({ query: keyword })))
     : null;
   const hasGraphConstraint = targets.size > 0;
   const ranked: HybridBrowseItem[] = [];

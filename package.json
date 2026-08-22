@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
+    "benchmark:nostr": "tsx scripts/benchmark-nostr.ts",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
@@ -24,12 +25,14 @@
     "svelte": "^5.56.3",
     "svelte-check": "^4.1.0",
     "tailwindcss": "^4.0.0",
+    "tsx": "^4.23.12",
     "typescript": "^5.9.3",
     "vite": "^6.4.3",
     "vitest": "^2.1.0"
   },
   "dependencies": {
     "@0xx0lostcause0xx0/polypack": "^3.0.1",
+    "@huggingface/transformers": "^4.2.0",
     "applesauce-core": "^6.1.0",
     "applesauce-loaders": "^6.1.0",
     "applesauce-relay": "^6.0.3",
