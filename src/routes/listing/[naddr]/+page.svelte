@@ -4,11 +4,13 @@
   import { loadNostrUser, type NostrUser } from '$lib/nostr/metadata';
   import { fade, scale } from 'svelte/transition';
   import AuthGate from '$components/AuthGate.svelte';
+  import ListingCard from '$components/ListingCard.svelte';
   import BlossomImage from '$components/BlossomImage.svelte';
   import { getDeletedAddresses, getDeletedEventIds } from '$lib/nostr/deletions';
   import { sendDirectMessage } from '$lib/nostr/dm';
   import { parseListingEvent, type ListingInput } from '$lib/nostr/listings';
   import { getCachedBrowseItem } from '$lib/nostr/browseCache';
+  import { queryRelatedBrowseItems, type RelatedBrowseItem } from '$lib/nostr/browseCacheStore';
   import { getActiveRelays } from '$lib/nostr/relays';
   import { eventStore, relayPool } from '$lib/nostr/runtime';
   import { collectEvents } from '$lib/nostr/requestEvents';
@@ -25,6 +27,7 @@
   let deleted = $state(false);
   let deletedEventIds = $state<string[]>([]);
   let seller = $state<NostrUser | null>(null);
+  let relatedListings = $state<RelatedBrowseItem[]>([]);
   let showContactModal = $state(false);
   let messageText = $state('');
   let sending = $state(false);
@@ -107,6 +110,19 @@
     return () => {
       cancelled = true;
       deleteSubscription.unsubscribe();
+    };
+  });
+
+  $effect(() => {
+    const currentListing = listing;
+    if (!currentListing) return;
+    let cancelled = false;
+    relatedListings = [];
+    void queryRelatedBrowseItems(data.pubkey, currentListing.id).then((items) => {
+      if (!cancelled) relatedListings = items;
+    });
+    return () => {
+      cancelled = true;
     };
   });
 </script>
@@ -224,6 +240,20 @@
           </AuthGate>
         </div>
       </div>
+    {/if}
+
+    {#if relatedListings.length > 0}
+      <section class="space-y-3 border-t border-slate-200 pt-5" aria-labelledby="related-listings-heading">
+        <div>
+          <h2 id="related-listings-heading" class="text-lg font-semibold text-slate-900">You may also like</h2>
+          <p class="mt-1 text-sm text-slate-500">Listings with similar categories or nearby locations.</p>
+        </div>
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {#each relatedListings as related (related.pubkey + ':' + related.listing.id)}
+            <ListingCard listing={related.listing} pubkey={related.pubkey} created_at={related.created_at} />
+          {/each}
+        </div>
+      </section>
     {/if}
   </div>
 {:else}

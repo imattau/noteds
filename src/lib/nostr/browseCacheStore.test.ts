@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { BrowseItem } from './browseCounts';
+import type { SellerReview } from './reviews';
 import {
   getBrowseItemFromStore,
   loadBrowseCacheStore,
   queryBrowseItemsBySeller,
+  queryBrowseReviewsBySeller,
+  getSellerReputation,
+  queryRelatedBrowseItems,
+  cacheBrowseReviews,
   queryBrowseCacheKeys,
   recordBrowseDeletions,
   resetBrowseCacheStoreForTests,
@@ -27,6 +32,17 @@ const item: BrowseItem = {
     status: 'active',
     content: 'Details'
   }
+};
+
+const review: SellerReview = {
+  id: 'review-1',
+  sellerPubkey: 'pubkey-1',
+  reviewerPubkey: 'reviewer-1',
+  rating: 5,
+  content: 'Excellent seller',
+  anonymous: false,
+  created_at: 1_700_000_100,
+  eventId: 'review-event-1'
 };
 
 describe('Polypack browse store', () => {
@@ -72,6 +88,41 @@ describe('Polypack browse store', () => {
 
     expect((await queryBrowseItemsBySeller('pubkey-1')).map((entry) => entry.listing.id)).toEqual([
       'listing-1',
+      'listing-2'
+    ]);
+  });
+
+  it('stores and queries seller reviews through graph relationships', async () => {
+    await cacheBrowseReviews([review, { ...review, id: 'review-2', rating: 3, eventId: 'review-event-2' }]);
+
+    expect(await queryBrowseReviewsBySeller('pubkey-1')).toEqual([
+      review,
+      { ...review, id: 'review-2', rating: 3, eventId: 'review-event-2' }
+    ]);
+    expect(await queryBrowseReviewsBySeller('pubkey-2')).toEqual([]);
+    expect(await getSellerReputation('pubkey-1')).toEqual({
+      count: 2,
+      averageRating: 4,
+      distribution: { 1: 0, 2: 0, 3: 1, 4: 0, 5: 1 }
+    });
+  });
+
+  it('ranks related listings by shared graph properties', async () => {
+    await upsertBrowseItems([
+      item,
+      {
+        ...item,
+        eventId: 'event-2',
+        listing: { ...item.listing, id: 'listing-2', title: 'Helmet' }
+      },
+      {
+        ...item,
+        eventId: 'event-3',
+        listing: { ...item.listing, id: 'listing-3', categories: ['Services'], subcategories: [], geohash: 'zzzzz' }
+      }
+    ]);
+
+    expect((await queryRelatedBrowseItems(item.pubkey, item.listing.id)).map((entry) => entry.listing.id)).toEqual([
       'listing-2'
     ]);
   });

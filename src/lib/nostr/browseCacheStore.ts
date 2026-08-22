@@ -3,6 +3,7 @@ import { BinaryStoreAdapter } from '@0xx0lostcause0xx0/polypack/persistence/opfs
 import type { GraphTransaction, PolyEdge, PolyNode } from '@0xx0lostcause0xx0/polypack';
 import type { BrowseItem } from './browseCounts';
 import type { BrowseQueryFilters } from './browseCache';
+import type { SellerReview } from './reviews';
 
 /** Shared graph nodes are reference-owned: removing a listing never removes them. */
 export const BROWSE_EDGE = {
@@ -13,6 +14,7 @@ export const BROWSE_EDGE = {
 } as const;
 
 const LISTING_NODE_TYPE = 'listing';
+const REVIEW_NODE_TYPE = 'seller-review';
 const TOMBSTONE_NODE_TYPE = 'deleted-event';
 const GRAPH_STORE_NAME = 'noteds-browse-graph';
 
@@ -25,6 +27,21 @@ interface ListingNodeData {
 
 interface TombstoneNodeData {
   eventId: string;
+}
+
+interface ReviewNodeData {
+  review: SellerReview;
+  sellerPubkey: string;
+}
+
+export interface SellerReputation {
+  count: number;
+  averageRating: number;
+  distribution: Record<1 | 2 | 3 | 4 | 5, number>;
+}
+
+export interface RelatedBrowseItem extends BrowseItem {
+  relevance: number;
 }
 
 let graph: PolyGraph | null = null;
@@ -43,6 +60,10 @@ function hasOPFS(): boolean {
 
 function listingNodeId(item: BrowseItem): string {
   return `listing:${item.pubkey}:${item.listing.id}`;
+}
+
+function reviewNodeId(review: SellerReview): string {
+  return `review:${review.reviewerPubkey}:${review.id}`;
 }
 
 function categoryNodeId(category: string): string {
@@ -98,6 +119,11 @@ function itemFromNode(node: PolyNode): BrowseItem | null {
 function tombstoneEventId(node: PolyNode): string | null {
   const data = node.data as Partial<TombstoneNodeData>;
   return typeof data.eventId === 'string' ? data.eventId : null;
+}
+
+function reviewFromNode(node: PolyNode): SellerReview | null {
+  const data = node.data as Partial<ReviewNodeData>;
+  return data.review && typeof data.review === 'object' ? data.review : null;
 }
 
 type GraphMutator = Pick<PolyGraph, 'addNode'> & Pick<GraphTransaction, 'addEdge'>;
@@ -315,6 +341,115 @@ export async function queryBrowseItemsBySeller(pubkey: string): Promise<BrowseIt
     .orderBy('created_at', 'desc')
     .toArray();
   return nodes.map(itemFromNode).filter((item): item is BrowseItem => item !== null);
+}
+
+export async function cacheBrowseReviews(reviews: SellerReview[]): Promise<void> {
+  if (reviews.length === 0) return;
+  await enqueueWrite(async () => {
+    const instance = await getGraph();
+    await instance.transaction((tx) => {
+      for (const review of reviews) {
+        const sellerId = `seller:${review.sellerPubkey}`;
+        const reviewerId = `reviewer:${review.reviewerPubkey}`;
+        const id = reviewNodeId(review);
+        tx.addNode({
+          id,
+          type: REVIEW_NODE_TYPE,
+          data: { review, sellerPubkey: review.sellerPubkey, created_at: review.created_at },
+          insertedAt: review.created_at * 1000,
+          updatedAt: Date.now()
+        });
+        tx.addNode(makeSharedNode(sellerId, 'seller', review.sellerPubkey));
+        tx.addNode(makeSharedNode(reviewerId, 'reviewer', review.reviewerPubkey));
+        tx.addEdge({
+          id: edgeId(id, 'REVIEWS_SELLER', sellerId),
+          source: id,
+          type: 'REVIEWS_SELLER',
+          target: sellerId,
+          createdAt: Date.now(),
+          data: { ownership: 'reference' }
+        });
+        tx.addEdge({
+          id: edgeId(id, 'WRITTEN_BY', reviewerId),
+          source: id,
+          type: 'WRITTEN_BY',
+          target: reviewerId,
+          createdAt: Date.now(),
+          data: { ownership: 'reference' }
+        });
+      }
+    });
+    await instance.flush();
+  });
+}
+
+export async function queryBrowseReviewsBySeller(sellerPubkey: string): Promise<SellerReview[]> {
+  const instance = await getGraph();
+  const sellerId = `seller:${sellerPubkey}`;
+  const nodes = await instance
+    .queryPersisted()
+    .whereNodeType(REVIEW_NODE_TYPE)
+    .join('REVIEWS_SELLER', 'out', (node) => node.id === sellerId)
+    .orderBy('created_at', 'desc')
+    .toArray();
+  return nodes.map(reviewFromNode).filter((review): review is SellerReview => review !== null);
+}
+
+export async function getSellerReputation(sellerPubkey: string): Promise<SellerReputation> {
+  const reviews = await queryBrowseReviewsBySeller(sellerPubkey);
+  const distribution: SellerReputation['distribution'] = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  for (const review of reviews) distribution[review.rating as 1 | 2 | 3 | 4 | 5] += 1;
+  return {
+    count: reviews.length,
+    averageRating: reviews.length === 0
+      ? 0
+      : reviews.reduce((total, review) => total + review.rating, 0) / reviews.length,
+    distribution
+  };
+}
+
+/** Rank active listings using the graph's shared taxonomy and location model. */
+export async function queryRelatedBrowseItems(
+  pubkey: string,
+  listingId: string,
+  limit = 6
+): Promise<RelatedBrowseItem[]> {
+  const source = await getBrowseItemFromStore(pubkey, listingId);
+  if (!source) return [];
+
+  const instance = await getGraph();
+  const nodes = await instance.queryPersisted().whereNodeType(LISTING_NODE_TYPE).toArray();
+  const sourceCategories = new Set(source.listing.categories);
+  const sourceSubcategories = new Set(
+    (source.listing.subcategories ?? []).map((entry) => `${entry.parent}::${entry.value}`)
+  );
+  const sourceGeohash = source.listing.geohash ?? '';
+  const ranked: RelatedBrowseItem[] = [];
+
+  for (const node of nodes) {
+    const item = itemFromNode(node);
+    if (!item || item.pubkey === pubkey && item.listing.id === listingId || item.listing.status !== 'active') continue;
+    const sharedCategories = item.listing.categories.filter((category) => sourceCategories.has(category)).length;
+    const sharedSubcategories = (item.listing.subcategories ?? []).filter((entry) =>
+      sourceSubcategories.has(`${entry.parent}::${entry.value}`)
+    ).length;
+    const candidateGeohash = item.listing.geohash ?? '';
+    let sharedGeohashPrefix = 0;
+    while (
+      sharedGeohashPrefix < sourceGeohash.length &&
+      sharedGeohashPrefix < candidateGeohash.length &&
+      sourceGeohash[sharedGeohashPrefix] === candidateGeohash[sharedGeohashPrefix]
+    ) {
+      sharedGeohashPrefix += 1;
+    }
+    const relevance = sharedCategories * 4 + sharedSubcategories * 6 + Math.min(sharedGeohashPrefix, 6);
+    if (relevance === 0) continue;
+    ranked.push({ ...item, relevance });
+  }
+
+  return ranked
+    .sort((a, b) => b.relevance - a.relevance || b.created_at - a.created_at)
+    .slice(0, Math.max(0, limit));
 }
 
 export function resetBrowseCacheStoreForTests(): void {

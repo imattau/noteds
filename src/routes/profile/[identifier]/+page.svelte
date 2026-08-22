@@ -10,6 +10,7 @@
     SELLER_REVIEW_KIND,
     type SellerReview
   } from '$lib/nostr/reviews';
+  import { getSellerReputation, type SellerReputation } from '$lib/nostr/browseCacheStore';
   import { account } from '$lib/nostr/signer';
 
   let { data }: { data: { pubkey: string; npub: string } } = $props();
@@ -17,6 +18,11 @@
   let seller = $state<NostrUser | null>(null);
   let listings = $state<AuthoredListing[]>([]);
   let reviews = $state<SellerReview[]>([]);
+  let reputation = $state<SellerReputation>({
+    count: 0,
+    averageRating: 0,
+    distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+  });
   let reviewerCache = $state<Record<string, NostrUser>>({});
   let activeTab = $state<'listings' | 'reviews'>('listings');
   let loadingListings = $state(true);
@@ -123,6 +129,19 @@
     try {
       const loadedReviews = await loadSellerReviews(pubkey);
       reviews = loadedReviews;
+      try {
+        reputation = await getSellerReputation(pubkey);
+      } catch {
+        const distribution: SellerReputation['distribution'] = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+        for (const review of loadedReviews) distribution[review.rating as 1 | 2 | 3 | 4 | 5] += 1;
+        reputation = {
+          count: loadedReviews.length,
+          averageRating: loadedReviews.length === 0
+            ? 0
+            : loadedReviews.reduce((total, review) => total + review.rating, 0) / loadedReviews.length,
+          distribution
+        };
+      }
 
       const uniqueReviewers = [...new Set(loadedReviews.map((review) => review.reviewerPubkey))];
       const loadedUsers = await Promise.all(uniqueReviewers.map((pubkey) => loadNostrUser(pubkey)));
@@ -231,6 +250,9 @@
               </span>
               <span class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600">
                 {reviews.length} reviews
+              </span>
+              <span class="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600">
+                {reputation.count > 0 ? `${reputation.averageRating.toFixed(1)} / 5 average` : 'No rating yet'}
               </span>
             </div>
           </div>

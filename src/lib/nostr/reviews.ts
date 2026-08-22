@@ -4,6 +4,7 @@ import { getActiveRelays } from './relays';
 import { collectEvents } from './requestEvents';
 import { eventStore, relayPool } from './runtime';
 import { signer } from './signer';
+import { cacheBrowseReviews, queryBrowseReviewsBySeller } from './browseCacheStore';
 
 // Custom addressable kind for seller reviews. NIP-01 reserves 30000-39999 for
 // addressable events, so this lets each review have a unique d tag while still
@@ -97,11 +98,17 @@ async function publishEvent(event: NostrEvent): Promise<void> {
   eventStore.add(event);
 }
 
+async function publishReviewEvent(event: NostrEvent): Promise<NostrEvent> {
+  await publishEvent(event);
+  const review = parseSellerReviewEvent(event);
+  if (review) await cacheBrowseReviews([review]);
+  return event;
+}
+
 export async function publishSellerReview(input: SellerReviewInput, options: PublishSellerReviewOptions = {}): Promise<NostrEvent> {
   if (!options.anonymous) {
     const event = await signer.signEvent(buildSellerReviewEvent(input));
-    await publishEvent(event);
-    return event;
+    return publishReviewEvent(event);
   }
 
   const secretKey = generateSecretKey();
@@ -117,8 +124,7 @@ export async function publishSellerReview(input: SellerReviewInput, options: Pub
     },
     secretKey
   );
-  await publishEvent(anonymousReviewEvent);
-  return anonymousReviewEvent;
+  return publishReviewEvent(anonymousReviewEvent);
 }
 
 export async function loadSellerReviews(sellerPubkey: string): Promise<SellerReview[]> {
@@ -142,8 +148,19 @@ export async function loadSellerReviews(sellerPubkey: string): Promise<SellerRev
     }
   }
 
-  return Array.from(reviews.values())
+  const loaded = Array.from(reviews.values())
     .map((event) => parseSellerReviewEvent(event))
     .filter((review): review is SellerReview => review !== null)
     .sort((a, b) => b.created_at - a.created_at);
+
+  if (loaded.length > 0) {
+    await cacheBrowseReviews(loaded);
+    return loaded;
+  }
+
+  try {
+    return await queryBrowseReviewsBySeller(sellerPubkey);
+  } catch {
+    return [];
+  }
 }
