@@ -32,6 +32,8 @@ npm run benchmark:nostr -- --limit 250 --runs 5 --since-days 30
 
 Useful options are `--relays wss://relay.example,wss://another.example` and `--json`. The benchmark fetches NIP-99 kind `30402` events, canonicalizes replaceable listings, indexes them in an in-memory Polypack graph, and measures keyword, category, and geohash queries. Keyword metrics use exact text containment as proxy relevance labels; they are regression signals until human-judged relevance data is available.
 
+The initial hand-authored graded judgments live in `src/lib/nostr/searchRelevanceSeed.ts`. Relevance uses 0–3: irrelevant, adjacent, useful, ideal. Replace the seed IDs with stable `pubkey:listingId` keys exported from the relay benchmark as real annotation rounds are completed. `gradedNdcgAtK` evaluates the resulting labels without collapsing partially useful results into a binary match.
+
 To exercise the same Transformers.js model outside the browser, use the Node CPU path:
 
 ```sh

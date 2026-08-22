@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateRanking, ndcgAtK, precisionAtK, reciprocalRank } from './rankingEvaluation';
+import { evaluateRanking, gradedNdcgAtK, ndcgAtK, precisionAtK, reciprocalRank } from './rankingEvaluation';
+import { SEARCH_RELEVANCE_SEED } from './searchRelevanceSeed';
 
 describe('ranking evaluation', () => {
   it('scores the first relevant result with reciprocal rank', () => {
@@ -23,5 +24,11 @@ describe('ranking evaluation', () => {
       precisionAtK: 0.5,
       ndcgAtK: 0.6309297535714575
     });
+  });
+
+  it('scores graded human relevance judgments', () => {
+    const judgments = SEARCH_RELEVANCE_SEED[0].judgments;
+    expect(gradedNdcgAtK(judgments.map((judgment) => judgment.id), judgments, 5)).toBe(1);
+    expect(gradedNdcgAtK(['listing:car-sale', ...judgments.slice(0, 4).map((judgment) => judgment.id)], judgments, 5)).toBeLessThan(1);
   });
 });
