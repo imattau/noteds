@@ -55,7 +55,7 @@
 
   {#if listing.categories.length > 0}
     <div class="mt-1 flex flex-wrap gap-1">
-      {#each listing.categories as category (category)}
+      {#each listing.categories as category, index (category + ':' + index)}
         <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{category}</span>
       {/each}
     </div>

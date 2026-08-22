@@ -57,14 +57,25 @@ export function createBrowserEmbeddingProvider(options: BrowserEmbeddingOptions 
 
 /** Warm the model off the main UI path, then switch graph ranking to it. */
 export async function enableBrowserSemanticSearch(options: BrowserEmbeddingOptions = {}): Promise<boolean> {
-  try {
-    const provider = createBrowserEmbeddingProvider(options);
-    await provider.embed('semantic search warmup');
-    setBrowseEmbeddingProvider(provider);
-    await reindexBrowseEmbeddings();
-    return true;
-  } catch (error) {
-    console.warn('Browser semantic search unavailable; retaining the local baseline embedding.', error);
-    return false;
+  const devices: Array<BrowserEmbeddingOptions['device']> = options.device
+    ? [options.device]
+    : typeof navigator !== 'undefined' && 'gpu' in navigator
+      ? ['webgpu', 'wasm']
+      : ['wasm'];
+  let lastError: unknown;
+  for (const device of devices) {
+    try {
+      const provider = createBrowserEmbeddingProvider({ ...options, device });
+      await provider.embed('semantic search warmup');
+      setBrowseEmbeddingProvider(provider);
+      await reindexBrowseEmbeddings();
+      console.info(`Browser semantic search enabled with ${device}.`);
+      return true;
+    } catch (error) {
+      lastError = error;
+      console.warn(`Browser semantic search ${device} provider unavailable; trying the next fallback.`, error);
+    }
   }
+  console.warn('Browser semantic search unavailable; retaining the local baseline embedding.', lastError);
+  return false;
 }
