@@ -20,6 +20,7 @@ vi.mock('./browseCacheStore', () => ({
     deletedEventIds: Array.from(deletedEventIds)
   }),
   loadLegacyBrowseCacheStore: async () => ({ items: [], deletedEventIds: [] }),
+  pruneBrowseCacheStore: async () => undefined,
   upsertBrowseItems: async (items: BrowseItem[]) => {
     for (const item of items) {
       storeItems.set(getItemKey(item), item);

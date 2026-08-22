@@ -4,6 +4,7 @@ import {
   getBrowseItemFromStore,
   loadLegacyBrowseCacheStore,
   loadBrowseCacheStore,
+  pruneBrowseCacheStore,
   queryBrowseCacheKeys,
   recordBrowseDeletions,
   resetBrowseCacheStoreForTests,
@@ -353,6 +354,7 @@ export async function cacheBrowseItems(items: BrowseItem[]): Promise<void> {
   let current = await loadBrowseCache();
   try {
     await upsertBrowseItems(items);
+    await pruneBrowseCacheStore(MAX_CACHED_ITEMS, MAX_CACHED_DELETIONS);
   } catch (error) {
     console.warn('Browse cache IndexedDB unavailable; falling back to snapshot cache.', error);
   }
@@ -372,6 +374,7 @@ export async function cacheBrowseDeletions(eventIds: string[]): Promise<void> {
   const current = await loadBrowseCache();
   try {
     await recordBrowseDeletions(eventIds);
+    await pruneBrowseCacheStore(MAX_CACHED_ITEMS, MAX_CACHED_DELETIONS);
   } catch (error) {
     console.warn('Browse cache IndexedDB unavailable; falling back to snapshot cache.', error);
   }

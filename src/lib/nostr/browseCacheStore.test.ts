@@ -8,6 +8,7 @@ import {
   queryBrowseReviewsBySeller,
   getSellerReputation,
   queryRelatedBrowseItems,
+  pruneBrowseCacheStore,
   cacheBrowseReviews,
   queryBrowseCacheKeys,
   recordBrowseDeletions,
@@ -125,6 +126,21 @@ describe('Polypack browse store', () => {
     expect((await queryRelatedBrowseItems(item.pubkey, item.listing.id)).map((entry) => entry.listing.id)).toEqual([
       'listing-2'
     ]);
+  });
+
+  it('prunes old listings while preserving the newest graph records', async () => {
+    await upsertBrowseItems([
+      { ...item, created_at: 100, eventId: 'old-event', listing: { ...item.listing, id: 'old-listing' } },
+      { ...item, created_at: 200, eventId: 'mid-event', listing: { ...item.listing, id: 'mid-listing' } },
+      { ...item, created_at: 300, eventId: 'new-event', listing: { ...item.listing, id: 'new-listing' } }
+    ]);
+    await pruneBrowseCacheStore(2, 500);
+
+    expect((await loadBrowseCacheStore()).items.map((entry) => entry.listing.id)).toEqual([
+      'mid-listing',
+      'new-listing'
+    ]);
+    expect(await getBrowseItemFromStore(item.pubkey, 'old-listing')).toBeNull();
   });
 
   it('keeps deletion tombstones after removing the listing', async () => {

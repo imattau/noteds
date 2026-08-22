@@ -17,6 +17,8 @@ const LISTING_NODE_TYPE = 'listing';
 const REVIEW_NODE_TYPE = 'seller-review';
 const TOMBSTONE_NODE_TYPE = 'deleted-event';
 const GRAPH_STORE_NAME = 'noteds-browse-graph';
+const SHARED_NODE_TYPES = new Set(['category', 'subcategory', 'geohash', 'seller', 'reviewer']);
+const RELATION_EDGE_TYPES = ['IN_CATEGORY', 'IN_SUBCATEGORY', 'LOCATED_IN', 'AUTHORED_BY', 'REVIEWS_SELLER', 'WRITTEN_BY'];
 
 interface ListingNodeData {
   item: BrowseItem;
@@ -406,6 +408,52 @@ export async function getSellerReputation(sellerPubkey: string): Promise<SellerR
       : reviews.reduce((total, review) => total + review.rating, 0) / reviews.length,
     distribution
   };
+}
+
+/** Keep durable graph storage bounded and remove shared nodes no longer in use. */
+export async function pruneBrowseCacheStore(maxItems = 200, maxDeletions = 500): Promise<void> {
+  await enqueueWrite(async () => {
+    const instance = await getGraph();
+    const listingNodes = await instance.queryPersisted().whereNodeType(LISTING_NODE_TYPE).toArray();
+    const tombstoneNodes = await instance.queryPersisted().whereNodeType(TOMBSTONE_NODE_TYPE).toArray();
+    const keepListings = new Set(
+      listingNodes
+        .sort((a, b) => ((b.data as Partial<ListingNodeData>).created_at ?? 0) - ((a.data as Partial<ListingNodeData>).created_at ?? 0))
+        .slice(0, Math.max(0, maxItems))
+        .map((node) => node.id)
+    );
+    const keepTombstones = new Set(
+      tombstoneNodes
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, Math.max(0, maxDeletions))
+        .map((node) => node.id)
+    );
+    const removeIds = [
+      ...listingNodes.filter((node) => !keepListings.has(node.id)).map((node) => node.id),
+      ...tombstoneNodes.filter((node) => !keepTombstones.has(node.id)).map((node) => node.id)
+    ];
+    if (removeIds.length > 0) {
+      for (const id of removeIds) await instance.getNodeSafe(id);
+      await instance.transaction((tx) => {
+        for (const id of removeIds) tx.removeNode(id);
+      });
+      await instance.flush();
+    }
+
+    const sharedNodes = (await Promise.all(
+      Array.from(SHARED_NODE_TYPES, (type) => instance.queryPersisted().whereNodeType(type).toArray())
+    )).flat();
+    const orphanIds = sharedNodes
+      .filter((node) => RELATION_EDGE_TYPES.every((type) => instance.getEdgeSources(node.id, type).length === 0))
+      .map((node) => node.id);
+    if (orphanIds.length > 0) {
+      for (const id of orphanIds) await instance.getNodeSafe(id);
+      await instance.transaction((tx) => {
+        for (const id of orphanIds) tx.removeNode(id);
+      });
+      await instance.flush();
+    }
+  });
 }
 
 /** Rank active listings using the graph's shared taxonomy and location model. */
