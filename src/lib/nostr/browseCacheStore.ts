@@ -1,9 +1,17 @@
-import { edgeId, MemoryAdapter, PolyGraph } from '@0xx0lostcause0xx0/polypack';
+import {
+  buildEmbeddingText,
+  cosineSimilarity,
+  edgeId,
+  FeatureHashEmbedding,
+  MemoryAdapter,
+  PolyGraph
+} from '@0xx0lostcause0xx0/polypack';
 import { BinaryStoreAdapter } from '@0xx0lostcause0xx0/polypack/persistence/opfs';
 import type { GraphTransaction, PolyEdge, PolyNode } from '@0xx0lostcause0xx0/polypack';
 import type { BrowseItem } from './browseCounts';
 import type { BrowseQueryFilters } from './browseCache';
 import type { SellerReview } from './reviews';
+import { decodeGeohash, distanceKm } from './geohash';
 
 /** Shared graph nodes are reference-owned: removing a listing never removes them. */
 export const BROWSE_EDGE = {
@@ -19,12 +27,31 @@ const TOMBSTONE_NODE_TYPE = 'deleted-event';
 const GRAPH_STORE_NAME = 'noteds-browse-graph';
 const SHARED_NODE_TYPES = new Set(['category', 'subcategory', 'geohash', 'seller', 'reviewer']);
 const RELATION_EDGE_TYPES = ['IN_CATEGORY', 'IN_SUBCATEGORY', 'LOCATED_IN', 'AUTHORED_BY', 'REVIEWS_SELLER', 'WRITTEN_BY'];
+const DEFAULT_EMBEDDING_VERSION = 'feature-hash-384-v1';
+
+export interface BrowseEmbeddingProvider {
+  readonly version: string;
+  readonly dimensions: number;
+  embed(text: string): Float64Array;
+}
+
+const defaultListingEmbedding = new FeatureHashEmbedding({ dimensions: 384 });
+let listingEmbedding: BrowseEmbeddingProvider = {
+  version: DEFAULT_EMBEDDING_VERSION,
+  dimensions: 384,
+  embed: (text) => defaultListingEmbedding.embed(text)
+};
+
+const reputationCache = new Map<string, { expiresAt: number; reputation: SellerReputation }>();
+const REPUTATION_CACHE_TTL_MS = 5 * 60 * 1000;
 
 interface ListingNodeData {
   item: BrowseItem;
   eventId: string;
   pubkey: string;
   created_at: number;
+  embeddingVersion: string;
+  embeddingTextHash: string;
 }
 
 interface TombstoneNodeData {
@@ -44,6 +71,22 @@ export interface SellerReputation {
 
 export interface RelatedBrowseItem extends BrowseItem {
   relevance: number;
+}
+
+export interface HybridBrowseItem extends BrowseItem {
+  relevance: number;
+  keywordScore: number;
+  semanticScore: number;
+  graphScore: number;
+  freshnessScore: number;
+  qualityScore: number;
+  reputationScore: number;
+  distanceKm: number | null;
+  distanceScore: number;
+}
+
+export function setBrowseEmbeddingProvider(provider: BrowseEmbeddingProvider): void {
+  listingEmbedding = provider;
 }
 
 let graph: PolyGraph | null = null;
@@ -89,23 +132,92 @@ function nowForItem(item: BrowseItem): number {
   return Math.max(0, item.created_at * 1000);
 }
 
+function embeddingTextForItem(item: BrowseItem): string {
+  return buildEmbeddingText(
+    {
+      title: item.listing.title,
+      summary: item.listing.summary,
+      categories: item.listing.categories.join(' '),
+      subcategories: (item.listing.subcategories ?? [])
+        .map((entry) => `${entry.parent} ${entry.value}`)
+        .join(' '),
+      location: item.listing.location ?? '',
+      content: item.listing.content
+    },
+    { title: 3, summary: 2, categories: 2, subcategories: 2, location: 1, content: 1 }
+  );
+}
+
+/** Small deterministic hash for detecting stale local embedding input. */
+function embeddingTextHash(text: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function listingEmbeddingMetadata(item: BrowseItem) {
+  const text = embeddingTextForItem(item);
+  return {
+    embeddingVersion: listingEmbedding.version,
+    embeddingTextHash: embeddingTextHash(text),
+    vector: listingEmbedding.embed(text)
+  };
+}
+
 function makeSharedNode(id: string, type: string, label: string): PolyNode {
   const now = Date.now();
   return { id, type, data: { label }, insertedAt: now, updatedAt: now };
+}
+
+async function backfillListingEmbeddings(instance: PolyGraph): Promise<void> {
+  const nodes = await instance.queryPersisted().whereNodeType(LISTING_NODE_TYPE).toArray();
+  let changed = false;
+  for (const node of nodes) {
+    const item = itemFromNode(node);
+    const data = node.data as Partial<ListingNodeData>;
+    if (!item) continue;
+    const textHash = embeddingTextHash(embeddingTextForItem(item));
+    if (node.vector?.length === listingEmbedding.dimensions && data.embeddingVersion === listingEmbedding.version && data.embeddingTextHash === textHash) {
+      continue;
+    }
+    await instance.getNodeSafe(node.id);
+    const embedding = listingEmbeddingMetadata(item);
+    instance.updateNode(node.id, {
+      ...data,
+      embeddingVersion: embedding.embeddingVersion,
+      embeddingTextHash: embedding.embeddingTextHash
+    }, embedding.vector);
+    changed = true;
+  }
+  if (changed) await instance.flush();
 }
 
 async function getGraph(): Promise<PolyGraph> {
   if (graph) return graph;
   if (!graphPromise) {
     graphPromise = (async () => {
-      const adapter = hasOPFS()
-        ? new BinaryStoreAdapter({ storeDir: GRAPH_STORE_NAME })
-        : new MemoryAdapter();
-      const instance = new PolyGraph(adapter, 5000);
-      await instance.warm();
+      let instance: PolyGraph;
+      if (hasOPFS()) {
+        try {
+          const adapter = new BinaryStoreAdapter({ storeDir: GRAPH_STORE_NAME });
+          instance = new PolyGraph(adapter, 5000);
+          await instance.warm();
+        } catch (error) {
+          console.warn('Polypack OPFS unavailable; using an in-memory browse graph.', error);
+          instance = new PolyGraph(new MemoryAdapter(), 5000);
+          await instance.warm();
+        }
+      } else {
+        instance = new PolyGraph(new MemoryAdapter(), 5000);
+        await instance.warm();
+      }
       instance.defineIndex({ name: 'listing-event-id', nodeType: LISTING_NODE_TYPE, fields: ['eventId'] });
       instance.defineIndex({ name: 'listing-pubkey', nodeType: LISTING_NODE_TYPE, fields: ['pubkey'] });
       instance.defineIndex({ name: 'listing-created-at', nodeType: LISTING_NODE_TYPE, fields: ['created_at'] });
+      await backfillListingEmbeddings(instance);
       graph = instance;
       return instance;
     })();
@@ -251,10 +363,19 @@ export async function upsertBrowseItems(items: BrowseItem[]): Promise<void> {
         const id = listingNodeId(item);
         const existing = tx.getNode(id);
         for (const relationId of edgeIds.get(id) ?? []) tx.removeEdge(relationId);
+        const embedding = listingEmbeddingMetadata(item);
         tx.addNode({
           id,
           type: LISTING_NODE_TYPE,
-          data: { item, eventId: item.eventId, pubkey: item.pubkey, created_at: item.created_at },
+          data: {
+            item,
+            eventId: item.eventId,
+            pubkey: item.pubkey,
+            created_at: item.created_at,
+            embeddingVersion: embedding.embeddingVersion,
+            embeddingTextHash: embedding.embeddingTextHash
+          },
+          vector: embedding.vector,
           insertedAt: existing?.insertedAt ?? nowForItem(item),
           updatedAt: Date.now()
         });
@@ -332,6 +453,146 @@ export async function queryBrowseCacheKeys(filters: BrowseQueryFilters, category
   }).filter(Boolean);
 }
 
+function normalizedTokens(value: string): string[] {
+  return value.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+function keywordScore(item: BrowseItem, keyword: string): number {
+  const tokens = Array.from(new Set(normalizedTokens(keyword)));
+  if (tokens.length === 0) return 0;
+  const searchableText = [
+    item.listing.title,
+    item.listing.summary,
+    item.listing.content,
+    item.listing.location ?? '',
+    ...item.listing.categories,
+    ...(item.listing.subcategories ?? []).flatMap((entry) => [entry.parent, entry.value])
+  ].join(' ').toLowerCase();
+  return tokens.filter((token) => searchableText.includes(token)).length / tokens.length;
+}
+
+function listingQualityScore(item: BrowseItem): number {
+  let score = item.listing.status === 'active' ? 0.35 : 0;
+  if (item.listing.title.trim()) score += 0.15;
+  if (item.listing.summary.trim()) score += 0.15;
+  if (item.listing.content.trim()) score += 0.15;
+  if (item.listing.images.length > 0) score += 0.1;
+  if (item.listing.categories.length > 0) score += 0.1;
+  return Math.min(1, score);
+}
+
+function freshnessScore(createdAt: number): number {
+  const ageDays = Math.max(0, (Date.now() / 1000 - createdAt) / 86_400);
+  return Math.exp(-ageDays / 90);
+}
+
+function graphOverlapScore(item: BrowseItem, filters: BrowseQueryFilters, categoryScope?: string): number {
+  const categories = new Set([...(categoryScope ? [categoryScope] : []), ...(filters.categories ?? [])]);
+  const categoryScore = categories.size === 0
+    ? 0
+    : item.listing.categories.filter((category) => categories.has(category)).length / categories.size;
+  const subcategories = filters.subcategories ?? [];
+  const subcategoryScore = subcategories.length === 0
+    ? 0
+    : subcategories.filter((value) => item.listing.subcategories?.some((entry) => `${entry.parent}::${entry.value}` === value)).length / subcategories.length;
+  const geohashScore = filters.geohashPrefix
+    ? Math.min(1, (item.listing.geohash ?? '').length > 0
+      ? Array.from({ length: Math.min(filters.geohashPrefix.length, item.listing.geohash?.length ?? 0) }, (_, index) => index)
+        .filter((index) => item.listing.geohash?.[index] === filters.geohashPrefix?.[index]).length / filters.geohashPrefix.length
+      : 0)
+    : 0;
+  const scores = [
+    ...(categories.size > 0 ? [categoryScore] : []),
+    ...(subcategories.length > 0 ? [subcategoryScore] : []),
+    ...(filters.geohashPrefix ? [geohashScore] : [])
+  ];
+  return scores.length > 0 ? scores.reduce((total, score) => total + score, 0) / scores.length : 0;
+}
+
+function distanceScoreFor(item: BrowseItem, geohashPrefix?: string): { distanceKm: number | null; score: number } {
+  if (!geohashPrefix || !item.listing.geohash) return { distanceKm: null, score: 0 };
+  const source = decodeGeohash(geohashPrefix);
+  const candidate = decodeGeohash(item.listing.geohash);
+  if (!source || !candidate) return { distanceKm: null, score: 0 };
+  const kilometres = distanceKm(source, candidate);
+  return { distanceKm: kilometres, score: Math.exp(-kilometres / 50) };
+}
+
+async function getCachedSellerReputation(sellerPubkey: string): Promise<SellerReputation> {
+  const cached = reputationCache.get(sellerPubkey);
+  if (cached && cached.expiresAt > Date.now()) return cached.reputation;
+  const reputation = await getSellerReputation(sellerPubkey);
+  reputationCache.set(sellerPubkey, { reputation, expiresAt: Date.now() + REPUTATION_CACHE_TTL_MS });
+  return reputation;
+}
+
+/** Retrieve and rank listings using graph filters, lexical matching, and stored vectors. */
+export async function queryHybridBrowseItems(
+  filters: BrowseQueryFilters,
+  categoryScope?: string,
+  limit = 30
+): Promise<HybridBrowseItem[]> {
+  const instance = await getGraph();
+  const targets = relationTargetIds(filters, categoryScope);
+  let query = instance.queryPersisted().whereNodeType(LISTING_NODE_TYPE);
+  for (const [edgeType, targetIds] of targets) {
+    query = query.join(edgeType, 'out', (node) => targetIds.has(node.id));
+  }
+  const nodes = await query.toArray();
+  const keyword = filters.keyword?.trim() ?? '';
+  const queryVector = keyword.length > 0
+    ? listingEmbedding.embed(buildEmbeddingText({ query: keyword }))
+    : null;
+  const hasGraphConstraint = targets.size > 0;
+  const ranked: HybridBrowseItem[] = [];
+
+  for (const node of nodes) {
+    const item = itemFromNode(node);
+    if (!item || item.listing.status !== 'active') continue;
+    if (filters.since !== undefined && item.created_at < filters.since) continue;
+    if (filters.location && !(item.listing.location ?? '').toLowerCase().includes(filters.location.toLowerCase())) continue;
+
+    const keywordMatch = keywordScore(item, keyword);
+    const semanticMatch = queryVector && node.vector
+      ? Math.max(0, cosineSimilarity(queryVector, node.vector))
+      : 0;
+    const graphMatch = hasGraphConstraint ? graphOverlapScore(item, filters, categoryScope) : 0;
+    const distance = distanceScoreFor(item, filters.geohashPrefix);
+    const fresh = freshnessScore(item.created_at);
+    const quality = listingQualityScore(item);
+    const reputation = await getCachedSellerReputation(item.pubkey);
+    const reputationMatch = reputation.count > 0 ? reputation.averageRating / 5 : 0.5;
+
+    const weights = [
+      keyword ? [keywordMatch, 0.3] : [0, 0],
+      keyword ? [semanticMatch, 0.25] : [0, 0],
+      hasGraphConstraint ? [graphMatch, 0.15] : [0, 0],
+      filters.geohashPrefix ? [distance.score, 0.1] : [0, 0],
+      [fresh, 0.1],
+      [quality, 0.1],
+      [reputationMatch, 0.05]
+    ] as Array<[number, number]>;
+    const totalWeight = weights.reduce((total, [, weight]) => total + weight, 0) || 1;
+    const relevance = weights.reduce((total, [score, weight]) => total + score * weight, 0) / totalWeight;
+    ranked.push({
+      ...item,
+      relevance,
+      keywordScore: keywordMatch,
+      semanticScore: semanticMatch,
+      graphScore: graphMatch,
+      freshnessScore: fresh,
+      qualityScore: quality,
+      reputationScore: reputationMatch,
+      distanceKm: distance.distanceKm,
+      distanceScore: distance.score
+    });
+  }
+
+  return ranked
+    .sort((a, b) => b.relevance - a.relevance || b.created_at - a.created_at)
+    .slice(0, Math.max(0, limit));
+}
+
 /** Graph-backed seller lookup for profile and reputation features. */
 export async function queryBrowseItemsBySeller(pubkey: string): Promise<BrowseItem[]> {
   const instance = await getGraph();
@@ -347,6 +608,7 @@ export async function queryBrowseItemsBySeller(pubkey: string): Promise<BrowseIt
 
 export async function cacheBrowseReviews(reviews: SellerReview[]): Promise<void> {
   if (reviews.length === 0) return;
+  for (const sellerPubkey of new Set(reviews.map((review) => review.sellerPubkey))) reputationCache.delete(sellerPubkey);
   await enqueueWrite(async () => {
     const instance = await getGraph();
     await instance.transaction((tx) => {

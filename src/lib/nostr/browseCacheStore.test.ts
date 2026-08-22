@@ -8,6 +8,7 @@ import {
   queryBrowseReviewsBySeller,
   getSellerReputation,
   queryRelatedBrowseItems,
+  queryHybridBrowseItems,
   pruneBrowseCacheStore,
   cacheBrowseReviews,
   queryBrowseCacheKeys,
@@ -126,6 +127,22 @@ describe('Polypack browse store', () => {
     expect((await queryRelatedBrowseItems(item.pubkey, item.listing.id)).map((entry) => entry.listing.id)).toEqual([
       'listing-2'
     ]);
+  });
+
+  it('retrieves and ranks listings with stored semantic vectors', async () => {
+    await upsertBrowseItems([
+      item,
+      {
+        ...item,
+        eventId: 'event-2',
+        listing: { ...item.listing, id: 'listing-2', title: 'Wooden dining table', summary: 'Solid oak table' }
+      }
+    ]);
+
+    const results = await queryHybridBrowseItems({ keyword: 'road bike' });
+    expect(results.map((entry) => entry.listing.id)).toEqual(['listing-1', 'listing-2']);
+    expect(results[0].semanticScore).toBeGreaterThan(0);
+    expect(results[0].keywordScore).toBe(1);
   });
 
   it('prunes old listings while preserving the newest graph records', async () => {

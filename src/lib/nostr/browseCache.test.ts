@@ -45,6 +45,10 @@ vi.mock('./browseCacheStore', () => ({
     return item;
   },
   queryBrowseCacheKeys: async () => Array.from(storeItems.keys()),
+  queryHybridBrowseItems: async (filters: { categories?: string[]; geohashPrefix?: string }) => Array.from(storeItems.values())
+    .filter((item) => !deletedEventIds.has(item.eventId))
+    .filter((item) => !filters.categories?.length || filters.categories.every((category) => item.listing.categories.includes(category)))
+    .filter((item) => !filters.geohashPrefix || filters.geohashPrefix.startsWith(item.listing.geohash ?? '')),
   resetBrowseCacheStoreForTests: () => resetStore()
 }));
 

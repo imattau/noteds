@@ -5,7 +5,7 @@ import {
   loadLegacyBrowseCacheStore,
   loadBrowseCacheStore,
   pruneBrowseCacheStore,
-  queryBrowseCacheKeys,
+  queryHybridBrowseItems,
   recordBrowseDeletions,
   resetBrowseCacheStoreForTests,
   upsertBrowseItems
@@ -282,41 +282,10 @@ function matchesSubcategories(item: BrowseItem, subcategories: string[]) {
 
 export async function queryBrowseCache(filters: BrowseQueryFilters, categoryScope?: string): Promise<BrowseCacheRecord> {
   try {
-    const [indexed, candidateKeys] = await Promise.all([loadBrowseCacheStore(), queryBrowseCacheKeys(filters, categoryScope)]);
-    const deletedSet = new Set(indexed.deletedEventIds);
-    const candidateKeySet = candidateKeys.length > 0 ? new Set(candidateKeys) : null;
-    const items: BrowseItem[] = [];
-
-    for (const item of indexed.items) {
-      if (deletedSet.has(item.eventId)) {
-        continue;
-      }
-      if (candidateKeySet && !candidateKeySet.has(getItemKey(item))) {
-        continue;
-      }
-      if (filters.since !== undefined && item.created_at < filters.since) {
-        continue;
-      }
-      if (filters.keyword && !matchesKeyword(item, filters.keyword)) {
-        continue;
-      }
-      if (!matchesLocationFilters(item, filters)) {
-        continue;
-      }
-      if (categoryScope && !item.listing.categories.includes(categoryScope)) {
-        continue;
-      }
-      if (filters.categories?.length && !matchesCategories(item, filters.categories)) {
-        continue;
-      }
-      if (filters.subcategories?.length && !matchesSubcategories(item, filters.subcategories)) {
-        continue;
-      }
-      items.push(item);
-    }
-
+    const rankedItems = await queryHybridBrowseItems(filters, categoryScope, MAX_CACHED_ITEMS);
+    const indexed = await loadBrowseCacheStore();
     return normalizeBrowseCache({
-      items,
+      items: rankedItems,
       deletedEventIds: indexed.deletedEventIds,
       updatedAt: 0
     });
