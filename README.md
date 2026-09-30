@@ -50,6 +50,13 @@ npm run preview     # preview the production build
 
 The app is a SvelteKit static site. It can be served from any static host; relay access, browser storage, Web Workers, WebGPU/WASM support, and Nostr signer availability are runtime capabilities of the browser.
 
+### Android app
+
+Noteds also ships as an Android app by wrapping the static build with
+[Tauri v2](https://v2.tauri.app/) (`src-tauri/`). All Android packaging
+happens in CI — see [docs/android-build.md](docs/android-build.md) for
+build triggers, signing secrets, and the Zapstore release process.
+
 ## Nostr and local data
 
 Noteds does not require a central account database. Listings and social activity are Nostr events. The local Polypack graph is a derived browser cache and can be rebuilt from relay data. Configure relay access in the application settings before publishing or browsing a specific relay set.

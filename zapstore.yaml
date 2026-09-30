@@ -1,0 +1,17 @@
+repository: https://github.com/imattau/noteds
+name: Noteds
+summary: A peer-to-peer classifieds marketplace built on Nostr
+description: |
+    Noteds is a browser-first, peer-to-peer classifieds marketplace built on
+    the Nostr protocol. Listings, edits, deletions, reviews, and direct
+    messages are all Nostr events, so browsing and publishing classifieds
+    isn't locked to any single platform or backend.
+license: ""
+website: https://github.com/imattau/noteds
+icon: src-tauri/icons/icon.png
+release_source: https://github.com/imattau/noteds
+metadata_sources: []
+# zsp metadata guidance
+# Add any of these optional fields when they are available:
+# tags: [classifieds, marketplace]
+# images: [https://example.com/screenshot.png]

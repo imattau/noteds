@@ -1,0 +1,256 @@
+name: Android build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Build a signed release (APK + AAB) instead of just debug"
+        type: boolean
+        default: false
+      publish_to_zapstore:
+        description: "Also broadcast this release to Zapstore relays (only meaningful alongside an existing/new GitHub Release)"
+        type: boolean
+        default: false
+  # Tag pushes like v1.0.0 also produce a signed release, attach it to a GitHub
+  # Release, and broadcast it to Zapstore. workflow_dispatch above covers
+  # ad-hoc release builds without cutting a tag; pass publish_to_zapstore to
+  # also re-broadcast without pushing a new tag.
+
+permissions:
+  contents: write
+
+env:
+  # Pin the NDK side-by-side version tauri android init expects. Bump this (and re-check
+  # `npx tauri android init` output for a version mismatch error) when upgrading @tauri-apps/cli.
+  ANDROID_NDK_VERSION: "27.0.12077973"
+  RUST_ANDROID_TARGETS: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+jobs:
+  build-debug:
+    name: Build debug APK
+    if: "!startsWith(github.ref, 'refs/tags/v')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.RUST_ANDROID_TARGETS }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # ubuntu-latest runners ship with an Android SDK preinstalled (that's what
+      # ANDROID_HOME already points to) — no separate SDK-setup action needed,
+      # and android-actions/setup-android@v3 fails outright since it
+      # unconditionally installs the long-removed legacy "tools" package.
+      # Its cmdline-tools bin isn't on PATH by default though, so add it.
+      - name: Add Android cmdline-tools to PATH
+        run: |
+          CMDLINE_TOOLS_BIN=$(dirname "$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -name sdkmanager | sort -V | tail -1)")
+          echo "$CMDLINE_TOOLS_BIN" >> "$GITHUB_PATH"
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses > /dev/null
+
+      - name: Install Android NDK
+        run: sdkmanager --install "ndk;${{ env.ANDROID_NDK_VERSION }}"
+
+      - name: Export NDK env vars
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}" >> "$GITHUB_ENV"
+
+      - name: Initialize Android project
+        run: npx tauri android init
+
+      # tauri android init scaffolds the Gradle project with Tauri's own
+      # placeholder icon — it does not apply src-tauri/icons/android/* on its
+      # own, so without this the app ships the generic Tauri logo.
+      - name: Apply Android launcher icons
+        run: cp -r src-tauri/icons/android/. src-tauri/gen/android/app/src/main/res/
+
+      - name: Build debug APK
+        run: npx tauri android build --apk --debug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noteds-debug-apk
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+
+  build-release:
+    name: Build signed release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.RUST_ANDROID_TARGETS }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # ubuntu-latest runners ship with an Android SDK preinstalled (that's what
+      # ANDROID_HOME already points to) — no separate SDK-setup action needed,
+      # and android-actions/setup-android@v3 fails outright since it
+      # unconditionally installs the long-removed legacy "tools" package.
+      # Its cmdline-tools bin isn't on PATH by default though, so add it.
+      - name: Add Android cmdline-tools to PATH
+        run: |
+          CMDLINE_TOOLS_BIN=$(dirname "$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -name sdkmanager | sort -V | tail -1)")
+          echo "$CMDLINE_TOOLS_BIN" >> "$GITHUB_PATH"
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses > /dev/null
+
+      - name: Install Android NDK
+        run: sdkmanager --install "ndk;${{ env.ANDROID_NDK_VERSION }}"
+
+      - name: Export NDK env vars
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}" >> "$GITHUB_ENV"
+
+      - name: Initialize Android project
+        run: npx tauri android init
+
+      # tauri android init scaffolds the Gradle project with Tauri's own
+      # placeholder icon — it does not apply src-tauri/icons/android/* on its
+      # own, so without this the app ships the generic Tauri logo.
+      - name: Apply Android launcher icons
+        run: cp -r src-tauri/icons/android/. src-tauri/gen/android/app/src/main/res/
+
+      - name: Write signing config
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          KEYSTORE_PATH="$RUNNER_TEMP/release.keystore"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+          cat > src-tauri/gen/android/keystore.properties <<EOF
+          storeFile=$KEYSTORE_PATH
+          storePassword=$ANDROID_KEYSTORE_PASSWORD
+          keyAlias=$ANDROID_KEY_ALIAS
+          keyPassword=$ANDROID_KEY_PASSWORD
+          EOF
+
+      # tauri android init's generated build.gradle.kts has no signingConfig
+      # on the release buildType, so keystore.properties above is otherwise
+      # inert and the output APK/AAB silently comes out unsigned. Wire it in,
+      # same as imattau/scrollstr's and imattau/Mangatsu's release workflows do.
+      - name: Wire signing config into Gradle build
+        run: |
+          python3 - <<'PY'
+          path = "src-tauri/gen/android/app/build.gradle.kts"
+          content = open(path).read()
+
+          signing_block = '''
+              signingConfigs {
+                  create("release") {
+                      val keystorePropertiesFile = rootProject.file("keystore.properties")
+                      val keystoreProperties = Properties()
+                      if (keystorePropertiesFile.exists()) {
+                          keystoreProperties.load(keystorePropertiesFile.inputStream())
+                      }
+                      if (keystoreProperties.containsKey("storeFile")) {
+                          storeFile = file(keystoreProperties["storeFile"] as String)
+                          storePassword = keystoreProperties["storePassword"] as String
+                          keyAlias = keystoreProperties["keyAlias"] as String
+                          keyPassword = keystoreProperties["keyPassword"] as String
+                      }
+                  }
+              }
+          '''
+
+          assert "    buildTypes {" in content, "buildTypes block not found in build.gradle.kts"
+          content = content.replace("    buildTypes {", signing_block + "    buildTypes {", 1)
+
+          release_marker = 'getByName("release") {\n            optimization {'
+          assert release_marker in content, "release buildType not found in build.gradle.kts"
+          content = content.replace(
+              release_marker,
+              'getByName("release") {\n            signingConfig = signingConfigs.getByName("release")\n            optimization {',
+          )
+
+          open(path, "w").write(content)
+          PY
+
+      - name: Build signed release APK + AAB
+        run: npx tauri android build --apk --aab
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noteds-release
+          path: |
+            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+          if-no-files-found: error
+
+      - name: Attach to GitHub Release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Install zsp
+        run: go install github.com/zapstore/zsp/cmd/zsp@latest
+
+      - name: Validate Zapstore config
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          zsp publish --check zapstore.yaml
+
+      # Broadcasts to Nostr relays on a real tag push, or on a manual
+      # workflow_dispatch run when explicitly opted in via
+      # publish_to_zapstore, so an ad-hoc debug/test dispatch never
+      # re-announces a release unless that's asked for.
+      - name: Publish to Zapstore
+        if: github.event_name == 'push' || inputs.publish_to_zapstore == true
+        env:
+          SIGN_WITH: ${{ secrets.ZAPSTORE_NSEC }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          zsp publish --quiet --skip-preview zapstore.yaml

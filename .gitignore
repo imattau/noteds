@@ -3,3 +3,8 @@ node_modules
 build
 .env
 .DS_Store
+
+# Local secrets and decrypted signing material
+release.keystore
+release.p12
+release.keystore.enc
