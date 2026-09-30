@@ -168,8 +168,8 @@
   <meta name="twitter:image" content={`${base}/noteds-og.svg`} />
 </svelte:head>
 
-<div class="min-h-screen bg-slate-50 text-slate-900">
-  <header class="border-b border-slate-200 bg-white/90 backdrop-blur">
+<div class="min-h-screen bg-slate-50 text-slate-900 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+  <header class="border-b border-slate-200 bg-white/90 backdrop-blur pt-[env(safe-area-inset-top)]">
     <div class="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
       <a href={base || '/'} class="flex items-center gap-3">
         <img
@@ -274,11 +274,11 @@
     </div>
   </header>
 
-  <main class="mx-auto max-w-5xl px-4 py-4 pb-24 sm:px-6 lg:px-8 sm:pb-8">
+  <main class="mx-auto max-w-5xl px-4 py-4 pb-[calc(6rem+env(safe-area-inset-bottom))] sm:px-6 lg:px-8 sm:pb-8">
     {@render children()}
   </main>
 
-  <nav class="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-200 bg-white/95 pb-safe backdrop-blur-md sm:hidden">
+  <nav class="fixed bottom-0 left-0 right-0 z-50 border-t border-slate-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md sm:hidden">
     <div class="grid {account ? 'grid-cols-5' : 'grid-cols-4'} items-center justify-around py-2">
       <a
         href={base || '/'}
