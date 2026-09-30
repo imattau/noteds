@@ -1,4 +1,5 @@
 import { encodeGeohash } from './geohash';
+import { isTauriApp } from '../platform';
 
 const BROWSER_AREA_CACHE_KEY = 'noteds:browser-area';
 const BROWSER_AREA_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -267,14 +268,38 @@ export function watchLocationSearch(
   };
 }
 
-export async function detectBrowserArea(
-  options: { precision?: number; fetchImpl?: typeof fetch } = {}
-): Promise<BrowserArea | null> {
-  const cached = getCachedBrowserArea();
-  if (cached) return cached;
-  if (typeof navigator === 'undefined' || !navigator.geolocation) return null;
+/**
+ * navigator.geolocation doesn't work inside Tauri's Android WebView — it has
+ * no native permission prompt wired up, so getCurrentPosition() just hangs
+ * or errors even with the manifest permission granted. The official
+ * @tauri-apps/plugin-geolocation plugin talks to Android's location APIs
+ * directly and handles the runtime permission prompt itself.
+ */
+async function getCurrentCoordinates(): Promise<{ latitude: number; longitude: number } | null> {
+  if (isTauriApp) {
+    try {
+      const { getCurrentPosition, checkPermissions, requestPermissions } = await import(
+        '@tauri-apps/plugin-geolocation'
+      );
+      let permission = await checkPermissions();
+      if (permission.location !== 'granted' && permission.coarseLocation !== 'granted') {
+        permission = await requestPermissions(['location']);
+      }
+      if (permission.location !== 'granted' && permission.coarseLocation !== 'granted') {
+        return null;
+      }
+      const position = await getCurrentPosition({
+        enableHighAccuracy: false,
+        timeout: 5000,
+        maximumAge: 30 * 60 * 1000
+      });
+      return { latitude: position.coords.latitude, longitude: position.coords.longitude };
+    } catch {
+      return null;
+    }
+  }
 
-  const precision = options.precision ?? 5;
+  if (typeof navigator === 'undefined' || !navigator.geolocation) return null;
 
   const position = await new Promise<GeolocationPosition | null>((resolve) => {
     navigator.geolocation.getCurrentPosition(
@@ -289,9 +314,21 @@ export async function detectBrowserArea(
   });
 
   if (!position) return null;
+  return { latitude: position.coords.latitude, longitude: position.coords.longitude };
+}
 
-  const latitude = position.coords.latitude;
-  const longitude = position.coords.longitude;
+export async function detectBrowserArea(
+  options: { precision?: number; fetchImpl?: typeof fetch } = {}
+): Promise<BrowserArea | null> {
+  const cached = getCachedBrowserArea();
+  if (cached) return cached;
+
+  const precision = options.precision ?? 5;
+
+  const coords = await getCurrentCoordinates();
+  if (!coords) return null;
+
+  const { latitude, longitude } = coords;
   const location = await reverseGeocodeNominatim(latitude, longitude, options.fetchImpl);
   if (!location) return null;
 

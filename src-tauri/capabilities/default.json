@@ -3,5 +3,12 @@
   "identifier": "default",
   "description": "default capabilities for Noteds",
   "windows": ["main"],
-  "permissions": ["core:default", "amber-opener:default", "clipboard-manager:allow-read-text"]
+  "permissions": [
+    "core:default",
+    "amber-opener:default",
+    "clipboard-manager:allow-read-text",
+    "geolocation:allow-check-permissions",
+    "geolocation:allow-request-permissions",
+    "geolocation:allow-get-current-position"
+  ]
 }
