@@ -4,6 +4,7 @@ import { loadNostrUser, type NostrUser } from './metadata';
 import type { Event, EventTemplate } from 'nostr-tools';
 import { buildPasskeySignerShim, isPasskeyShim } from './passkeyIdentity';
 import type { PasskeySignerShim } from './passkeyIdentity';
+import type { TauriAmberSigner } from './tauriAmberSigner';
 
 interface NostrSignerLike {
   getPublicKey: () => Promise<string>;
@@ -30,6 +31,7 @@ interface NostrSignerAdapter extends NostrSignerLike {
 }
 
 let passkeySignerShim: PasskeySignerShim | null = null;
+let amberSignerInstance: TauriAmberSigner | null = null;
 let restoredPasskeyPubkey: string | null = null;
 let hydratedPreferencesPubkey: string | null = null;
 
@@ -41,6 +43,10 @@ function hasActivePasskeySession(): boolean {
   return passkeySignerShim !== null;
 }
 
+function hasActiveAmberSession(): boolean {
+  return amberSignerInstance !== null;
+}
+
 function isNip07SignerLike(nostr: unknown): nostr is NostrSignerLike {
   if (!nostr || typeof nostr !== 'object') return false;
   const candidate = nostr as Partial<NostrSignerLike>;
@@ -50,7 +56,12 @@ function isNip07SignerLike(nostr: unknown): nostr is NostrSignerLike {
 let nostrBridgePromise: Promise<void> | null = null;
 
 async function ensureWindowNostrBridge(): Promise<void> {
-  if (typeof window === 'undefined' || (window as any).nostr || hasActivePasskeySession()) {
+  if (
+    typeof window === 'undefined' ||
+    (window as any).nostr ||
+    hasActivePasskeySession() ||
+    hasActiveAmberSession()
+  ) {
     return;
   }
 
@@ -81,11 +92,22 @@ async function getNostrSigner(prompt = false): Promise<NostrSignerLike | null> {
   if (passkeySignerShim) {
     return passkeySignerShim;
   }
+  if (amberSignerInstance) {
+    return amberSignerInstance;
+  }
   if (!isBrowser()) {
     return null;
   }
 
   const loginMethod = await idbkv.get<string>('noteds:login_method');
+  if (loginMethod === 'amber') {
+    // The signer app itself holds the key; re-instantiating just re-arms
+    // the clipboard/visibilitychange plumbing used to talk to it, no
+    // ceremony needed like passkey's WebAuthn unlock.
+    const { TauriAmberSigner } = await import('./tauriAmberSigner');
+    amberSignerInstance = new TauriAmberSigner();
+    return amberSignerInstance;
+  }
   if (loginMethod === 'passkey') {
     if (prompt) {
       if (!passkeyUnlockPromise) {
@@ -139,6 +161,7 @@ async function getNostrSigner(prompt = false): Promise<NostrSignerLike | null> {
 
 export function hasActiveSigner(): boolean {
   if (passkeySignerShim) return true;
+  if (amberSignerInstance) return true;
   if (!isBrowser()) return false;
   const nostr = (window as Window & { nostr?: unknown }).nostr;
   return isNip07SignerLike(nostr);
@@ -242,6 +265,8 @@ export const signer = {
     const pubkey = await withSigner((nostr) => nostr.getPublicKey(), true);
     if (passkeySignerShim) {
       await idbkv.set('noteds:login_method', 'passkey');
+    } else if (amberSignerInstance) {
+      await idbkv.set('noteds:login_method', 'amber');
     } else {
       await idbkv.set('noteds:login_method', 'extension');
     }
@@ -275,11 +300,26 @@ export async function completePasskeySession(secretKey: Uint8Array, pubkey: stri
   await updateAccountFromPubkey(pubkey);
 }
 
+export async function completeAmberSession(): Promise<string> {
+  if (!isBrowser()) throw new Error('Signer app login requires a browser environment.');
+  const { TauriAmberSigner } = await import('./tauriAmberSigner');
+  const instance = new TauriAmberSigner();
+  const pubkey = await instance.getPublicKey();
+  amberSignerInstance = instance;
+  await idbkv.set('noteds:login_method', 'amber');
+  await updateAccountFromPubkey(pubkey);
+  return pubkey;
+}
+
 export async function logout(): Promise<void> {
   if (!isBrowser()) return;
   if (passkeySignerShim) {
     passkeySignerShim.destroy();
     passkeySignerShim = null;
+  }
+  if (amberSignerInstance) {
+    amberSignerInstance.destroy();
+    amberSignerInstance = null;
   }
   hydratedPreferencesPubkey = null;
   if (isPasskeyShim((window as Window & { nostr?: unknown }).nostr)) {

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { base } from '$app/paths';
   import { account, hasActiveSigner, signer } from '$lib/nostr/signer';
+  import { isTauriApp } from '$lib/platform';
 
   let { children } = $props();
 
@@ -13,7 +14,12 @@
     connecting = true;
     error = null;
     try {
-      await signer.getPublicKey();
+      if (isTauriApp) {
+        const { completeAmberSession } = await import('$lib/nostr/signer');
+        await completeAmberSession();
+      } else {
+        await signer.getPublicKey();
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to connect to a Nostr signer.';
     } finally {
@@ -39,7 +45,11 @@
       <p class="text-sm text-red-600">{error}</p>
     {/if}
     <p class="text-xs text-slate-400">
-      Set up a passkey identity, or use a NIP-07 extension / NIP-46 bunker, in
+      {#if isTauriApp}
+        Connect with a signer app (e.g. Amber), in
+      {:else}
+        Set up a passkey identity, or use a NIP-07 extension / NIP-46 bunker, in
+      {/if}
       <a href={`${base}/settings`} class="underline">Settings</a>.
     </p>
   </div>

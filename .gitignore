@@ -8,3 +8,4 @@ build
 release.keystore
 release.p12
 release.keystore.enc
+*.b64

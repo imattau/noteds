@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "default capabilities for Noteds",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "amber-opener:default", "clipboard-manager:allow-read-text"]
 }

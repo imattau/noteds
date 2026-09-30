@@ -5,6 +5,7 @@
   import { afterNavigate, goto } from '$app/navigation';
   import '../app.css';
   import type { NostrUser } from '$lib/nostr/metadata';
+  import { isTauriApp } from '$lib/platform';
 
   let { children } = $props();
 
@@ -13,6 +14,7 @@
   let authError = $state<string | null>(null);
   let connecting = $state(false);
   let passkeyLoading = $state(false);
+  let signerAppLoading = $state(false);
 
   onMount(() => {
     let disposed = false;
@@ -130,6 +132,19 @@
       passkeyLoading = false;
     }
   }
+
+  async function connectWithSignerApp() {
+    signerAppLoading = true;
+    authError = null;
+    try {
+      const { completeAmberSession } = await import('$lib/nostr/signer');
+      await completeAmberSession();
+    } catch (error) {
+      authError = error instanceof Error ? error.message : 'Failed to reach the signer app.';
+    } finally {
+      signerAppLoading = false;
+    }
+  }
 </script>
 
 <svelte:head>
@@ -214,25 +229,40 @@
             >
               Settings
             </a>
-            <button
-              type="button"
-              class="rounded-full border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60"
-              onclick={connectWithNostr}
-              disabled={connecting || passkeyLoading}
-            >
-              {connecting ? 'Connecting via NIP-07/46…' : 'Connect with Nostr'}
-            </button>
-            <button
-              type="button"
-              class="rounded-full bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-700 disabled:cursor-wait disabled:opacity-60"
-              onclick={usePasskey}
-              disabled={connecting || passkeyLoading}
-            >
-              {passkeyLoading ? 'Opening…' : 'Use Passkey'}
-            </button>
+            {#if isTauriApp}
+              <button
+                type="button"
+                class="rounded-full bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-700 disabled:cursor-wait disabled:opacity-60"
+                onclick={connectWithSignerApp}
+                disabled={signerAppLoading}
+              >
+                {signerAppLoading ? 'Opening signer app…' : 'Signer App'}
+              </button>
+            {:else}
+              <button
+                type="button"
+                class="rounded-full border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60"
+                onclick={connectWithNostr}
+                disabled={connecting || passkeyLoading}
+              >
+                {connecting ? 'Connecting via NIP-07/46…' : 'Connect with Nostr'}
+              </button>
+              <button
+                type="button"
+                class="rounded-full bg-slate-900 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-700 disabled:cursor-wait disabled:opacity-60"
+                onclick={usePasskey}
+                disabled={connecting || passkeyLoading}
+              >
+                {passkeyLoading ? 'Opening…' : 'Use Passkey'}
+              </button>
+            {/if}
           {/if}
         </div>
-        {#if connecting}
+        {#if signerAppLoading}
+          <p class="max-w-sm text-right text-xs text-slate-500">
+            Waiting for the signer app to return.
+          </p>
+        {:else if connecting}
           <p class="max-w-sm text-right text-xs text-slate-500">
             Waiting for a NIP-07 extension or NIP-46 bunker.
           </p>

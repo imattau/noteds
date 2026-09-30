@@ -95,11 +95,20 @@ sign the release announcement event).
 These aren't blockers for the CI/build setup, but should be verified on an
 actual Android device/emulator before relying on the app day-to-day:
 
-- **NIP-07 signing**: noteds' browser auth path relies on NIP-07 browser
-  extensions, which don't exist inside Tauri's Android WebView. Passkey
-  auth ([nostr-passkey](https://github.com/imattau/nostr-passkey)) is the
-  primary path expected to work on Android; confirm it does, since NIP-07
-  simply won't be available as a signer option.
+- **Signer App (Amber/NIP-55) login**: on the Android build, `isTauri()`
+  (`src/lib/platform.ts`) hides the NIP-07 extension and passkey login
+  options — neither works reliably inside Tauri's Android WebView — and
+  shows "Signer App" instead. That path launches Amber via a custom native
+  plugin (`src-tauri/tauri-plugin-amber-opener`) rather than the
+  `intent://` trick browsers use, because Amber requires the launching
+  Intent to carry `Browser.EXTRA_APPLICATION_ID`, which only a real browser
+  sets. Confirm on a real device: Amber launches, returns control to
+  noteds, and the pubkey/signature comes back correctly via the OS
+  clipboard (`@tauri-apps/plugin-clipboard-manager`, not the Web Clipboard
+  API — `navigator.clipboard.readText()` is unreliable inside the WebView).
+  See `src/lib/nostr/tauriAmberSigner.ts`. This is ported from
+  [imattau/Mangatsu](https://github.com/imattau/Mangatsu)'s working
+  implementation but hasn't been verified against noteds' own build yet.
 - **OPFS availability**: the local browse graph
   ([Polypack](https://github.com/0xx0lostcause0xx0/polypack)) persists to
   OPFS when available and falls back to memory otherwise — confirm which

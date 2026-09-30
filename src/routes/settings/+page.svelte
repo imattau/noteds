@@ -2,13 +2,14 @@
   import { onMount } from 'svelte';
   import { nip19 } from 'nostr-tools';
   import { page } from '$app/state';
-  import { completePasskeySession, logout, account } from '$lib/nostr/signer';
+  import { completeAmberSession, completePasskeySession, logout, account } from '$lib/nostr/signer';
   import {
     hasStoredPasskeyIdentity,
     importPasskeyIdentityFromNsecForApp,
     registerPasskeyIdentityForApp,
     unlockPasskeyIdentityForApp
   } from '$lib/nostr/passkeyIdentity';
+  import { isTauriApp } from '$lib/platform';
   import { sanitizeRelayUrl } from '$lib/nostr/security';
   import {
     DEFAULT_BLOSSOM_SERVERS,
@@ -24,6 +25,7 @@
   let nsecInput = $state('');
   let hasPasskey = $state(hasStoredPasskeyIdentity());
   let passkeyBusy = $state(false);
+  let signerAppBusy = $state(false);
 
   let relays = $state<string[]>(getCustomRelays());
   let newRelayUrl = $state('');
@@ -70,6 +72,18 @@
       authError = e instanceof Error ? e.message : 'Failed to prepare passkey identity.';
     } finally {
       passkeyBusy = false;
+    }
+  }
+
+  async function handleSignerAppConnect() {
+    authError = null;
+    signerAppBusy = true;
+    try {
+      await completeAmberSession();
+    } catch (e) {
+      authError = e instanceof Error ? e.message : 'Failed to reach the signer app.';
+    } finally {
+      signerAppBusy = false;
     }
   }
 
@@ -164,36 +178,53 @@
     </button>
   {:else}
     <p class="mt-2 text-sm text-slate-500">No account connected on this device.</p>
-    <div class="mt-3 flex flex-col gap-3">
-      <label class="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500" for="nsec-input">
-        Optional existing nsec
-      </label>
-      <input
-        id="nsec-input"
-        type="text"
-        placeholder="nsec1… or hex secret key"
-        class="block w-full rounded-md border-slate-300 shadow-sm sm:max-w-sm sm:text-sm"
-        bind:value={nsecInput}
-      />
-      <button
-        bind:this={passkeyBtn}
-        type="button"
-        class="self-start rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 focus:ring-4 focus:ring-slate-300 focus:outline-none"
-        onclick={handlePasskeySubmit}
-        disabled={passkeyBusy}
-      >
-        {passkeyBusy
-          ? 'Working…'
-          : nsecInput.trim()
-            ? 'Create passkey from nsec'
-            : hasPasskey
-              ? 'Unlock passkey'
-              : 'Create new passkey'}
-      </button>
-      <p class="text-xs text-slate-500">
-        Leave the key empty to create a new Nostr keypair, or paste an existing `nsec` to move it into a passkey on this device.
-      </p>
-    </div>
+    {#if isTauriApp}
+      <div class="mt-3 flex flex-col gap-3">
+        <button
+          bind:this={passkeyBtn}
+          type="button"
+          class="self-start rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 focus:ring-4 focus:ring-slate-300 focus:outline-none"
+          onclick={handleSignerAppConnect}
+          disabled={signerAppBusy}
+        >
+          {signerAppBusy ? 'Opening signer app…' : 'Connect with Signer App'}
+        </button>
+        <p class="text-xs text-slate-500">
+          Uses a NIP-55 signer app installed on this device (e.g. Amber) to sign in without exposing your key to noteds.
+        </p>
+      </div>
+    {:else}
+      <div class="mt-3 flex flex-col gap-3">
+        <label class="block text-xs font-semibold uppercase tracking-[0.18em] text-slate-500" for="nsec-input">
+          Optional existing nsec
+        </label>
+        <input
+          id="nsec-input"
+          type="text"
+          placeholder="nsec1… or hex secret key"
+          class="block w-full rounded-md border-slate-300 shadow-sm sm:max-w-sm sm:text-sm"
+          bind:value={nsecInput}
+        />
+        <button
+          bind:this={passkeyBtn}
+          type="button"
+          class="self-start rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 focus:ring-4 focus:ring-slate-300 focus:outline-none"
+          onclick={handlePasskeySubmit}
+          disabled={passkeyBusy}
+        >
+          {passkeyBusy
+            ? 'Working…'
+            : nsecInput.trim()
+              ? 'Create passkey from nsec'
+              : hasPasskey
+                ? 'Unlock passkey'
+                : 'Create new passkey'}
+        </button>
+        <p class="text-xs text-slate-500">
+          Leave the key empty to create a new Nostr keypair, or paste an existing `nsec` to move it into a passkey on this device.
+        </p>
+      </div>
+    {/if}
   {/if}
 
   {#if authError}
