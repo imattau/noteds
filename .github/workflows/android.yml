@@ -103,6 +103,7 @@ jobs:
                       <action android:name="android.intent.action.VIEW" />
                       <data android:scheme="nostrsigner" />
                   </intent>
+                  <package android:name="com.greenart7c3.nostrsigner" />
               </queries>
           '''
           match = re.search(r"<manifest[^>]*>", content)
@@ -194,6 +195,7 @@ jobs:
                       <action android:name="android.intent.action.VIEW" />
                       <data android:scheme="nostrsigner" />
                   </intent>
+                  <package android:name="com.greenart7c3.nostrsigner" />
               </queries>
           '''
           match = re.search(r"<manifest[^>]*>", content)

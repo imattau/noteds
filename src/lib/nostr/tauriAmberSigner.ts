@@ -42,6 +42,29 @@ function isHexSignature(value: string): boolean {
   return /^[0-9a-f]{128}$/i.test(value);
 }
 
+/**
+ * Package name of Amber, whose content provider authorities are
+ * `<package>.<REQUEST_TYPE>` (NIP-55 content resolver method).
+ */
+const SIGNER_PACKAGE = 'com.greenart7c3.nostrsigner';
+
+/**
+ * Permissions requested up front on get_public_key so the signer can offer
+ * to remember them, letting later requests run via the content resolver.
+ */
+const REQUESTED_PERMISSIONS = JSON.stringify([
+  { type: 'sign_event' },
+  { type: 'nip04_encrypt' },
+  { type: 'nip04_decrypt' },
+  { type: 'nip44_encrypt' },
+  { type: 'nip44_decrypt' }
+]);
+
+interface SignerQueryResult {
+  status: 'ok' | 'rejected' | 'unavailable';
+  result?: string;
+}
+
 interface PendingRequest {
   resolve: (value: string) => void;
   reject: (reason: unknown) => void;
@@ -60,6 +83,9 @@ export class TauriAmberSigner {
   };
 
   private pendingRequest: PendingRequest | null = null;
+  // Intent requests switch to the signer app and read the answer back from
+  // the clipboard, so only one can be in flight at a time.
+  private intentQueue: Promise<unknown> = Promise.resolve();
 
   constructor() {
     document.addEventListener('visibilitychange', this.onVisibilityChange);
@@ -87,18 +113,55 @@ export class TauriAmberSigner {
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
   }
 
-  private async request(uri: string): Promise<string> {
-    if (this.pendingRequest) {
-      this.pendingRequest.reject(new Error('Canceled'));
-      this.pendingRequest = null;
+  private requestViaIntent(uri: string): Promise<string> {
+    const run = async (): Promise<string> => {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const result = await new Promise<string>((resolve, reject) => {
+        this.pendingRequest = { resolve, reject };
+        invoke('plugin:amber-opener|open_amber_url', { url: uri }).catch(reject);
+      }).finally(() => {
+        this.pendingRequest = null;
+      });
+      if (result.length === 0) throw new Error('Empty clipboard');
+      return result;
+    };
+    const next = this.intentQueue.then(run, run);
+    this.intentQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  /**
+   * Asks the signer's content provider to handle the request in the
+   * background. Succeeds only when the user chose "remember my choice" in
+   * the signer; returns null otherwise so the caller can use the intent flow.
+   */
+  private async requestViaProvider(
+    type: string,
+    payload: string,
+    peerPubkey = ''
+  ): Promise<string | null> {
+    if (!this.pubkey) return null;
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const response = await invoke<SignerQueryResult>('plugin:amber-opener|query_signer', {
+        uri: `content://${SIGNER_PACKAGE}.${type}`,
+        args: [payload, peerPubkey, this.pubkey]
+      });
+      return response?.status === 'ok' && response.result ? response.result : null;
+    } catch {
+      return null;
     }
-    const { invoke } = await import('@tauri-apps/api/core');
-    const result = await new Promise<string>((resolve, reject) => {
-      this.pendingRequest = { resolve, reject };
-      invoke('plugin:amber-opener|open_amber_url', { url: uri }).catch(reject);
-    });
-    if (result.length === 0) throw new Error('Empty clipboard');
-    return result;
+  }
+
+  private async request(
+    uri: string,
+    provider?: { type: string; payload: string; peerPubkey?: string }
+  ): Promise<string> {
+    if (provider) {
+      const silent = await this.requestViaProvider(provider.type, provider.payload, provider.peerPubkey);
+      if (silent) return silent;
+    }
+    return this.requestViaIntent(uri);
   }
 
   async getPublicKey(): Promise<string> {
@@ -106,9 +169,10 @@ export class TauriAmberSigner {
     const uri = buildNostrSignerUri(null, {
       type: 'get_public_key',
       compressionType: 'none',
-      returnType: 'signature'
+      returnType: 'signature',
+      permissions: REQUESTED_PERMISSIONS
     });
-    const result = await this.request(uri);
+    const result = await this.requestViaIntent(uri);
     if (isHexKey(result)) {
       this.pubkey = result;
       return result;
@@ -128,57 +192,48 @@ export class TauriAmberSigner {
     const draftWithId = { ...draft, id: getEventHash({ ...draft, pubkey }) };
     const uri = buildNostrSignerUri(JSON.stringify(draftWithId), {
       type: 'sign_event',
+      current_user: pubkey,
       compressionType: 'none',
       returnType: 'signature'
     });
-    const sig = await this.request(uri);
+    const sig = await this.request(uri, {
+      type: 'SIGN_EVENT',
+      payload: JSON.stringify(draftWithId)
+    });
     if (!isHexSignature(sig)) throw new Error('Expected hex signature');
     const event = { ...draftWithId, sig, pubkey };
     if (!verifyEvent(event)) throw new Error('Invalid signature');
     return event;
   }
 
-  async nip04Encrypt(pubkey: string, plaintext: string): Promise<string> {
-    return this.request(
-      buildNostrSignerUri(plaintext, {
-        type: 'nip04_encrypt',
-        pubKey: pubkey,
-        compressionType: 'none',
-        returnType: 'signature'
-      })
-    );
+  private cryptoRequest(
+    type: 'nip04_encrypt' | 'nip04_decrypt' | 'nip44_encrypt' | 'nip44_decrypt',
+    pubkey: string,
+    content: string
+  ): Promise<string> {
+    const uri = buildNostrSignerUri(content, {
+      type,
+      pubKey: pubkey,
+      current_user: this.pubkey,
+      compressionType: 'none',
+      returnType: 'signature'
+    });
+    return this.request(uri, { type: type.toUpperCase(), payload: content, peerPubkey: pubkey });
   }
 
-  async nip04Decrypt(pubkey: string, ciphertext: string): Promise<string> {
-    return this.request(
-      buildNostrSignerUri(ciphertext, {
-        type: 'nip04_decrypt',
-        pubKey: pubkey,
-        compressionType: 'none',
-        returnType: 'signature'
-      })
-    );
+  nip04Encrypt(pubkey: string, plaintext: string): Promise<string> {
+    return this.cryptoRequest('nip04_encrypt', pubkey, plaintext);
   }
 
-  async nip44Encrypt(pubkey: string, plaintext: string): Promise<string> {
-    return this.request(
-      buildNostrSignerUri(plaintext, {
-        type: 'nip44_encrypt',
-        pubKey: pubkey,
-        compressionType: 'none',
-        returnType: 'signature'
-      })
-    );
+  nip04Decrypt(pubkey: string, ciphertext: string): Promise<string> {
+    return this.cryptoRequest('nip04_decrypt', pubkey, ciphertext);
   }
 
-  async nip44Decrypt(pubkey: string, ciphertext: string): Promise<string> {
-    return this.request(
-      buildNostrSignerUri(ciphertext, {
-        type: 'nip44_decrypt',
-        pubKey: pubkey,
-        compressionType: 'none',
-        returnType: 'signature'
-      })
-    );
+  nip44Encrypt(pubkey: string, plaintext: string): Promise<string> {
+    return this.cryptoRequest('nip44_encrypt', pubkey, plaintext);
+  }
+
+  nip44Decrypt(pubkey: string, ciphertext: string): Promise<string> {
+    return this.cryptoRequest('nip44_decrypt', pubkey, ciphertext);
   }
 }

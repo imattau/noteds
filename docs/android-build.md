@@ -109,6 +109,13 @@ actual Android device/emulator before relying on the app day-to-day:
   See `src/lib/nostr/tauriAmberSigner.ts`. This is ported from
   [imattau/Mangatsu](https://github.com/imattau/Mangatsu)'s working
   implementation but hasn't been verified against noteds' own build yet.
+- **Signer approvals persisting**: requests first try Amber's NIP-55
+  content resolver (`plugin:amber-opener|query_signer`), which runs silently
+  once the user ticks "remember my choice" in Amber; otherwise they fall back
+  to the intent flow, one request at a time. Confirm on a device that after
+  approving once with "remember", opening Messages / My Listings decrypts
+  without switching to Amber. The content-resolver path is untested on
+  hardware.
 - **OPFS availability**: the local browse graph
   ([Polypack](https://github.com/0xx0lostcause0xx0/polypack)) persists to
   OPFS when available and falls back to memory otherwise — confirm which

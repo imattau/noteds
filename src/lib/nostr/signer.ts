@@ -106,6 +106,10 @@ async function getNostrSigner(prompt = false): Promise<NostrSignerLike | null> {
     // ceremony needed like passkey's WebAuthn unlock.
     const { TauriAmberSigner } = await import('./tauriAmberSigner');
     amberSignerInstance = new TauriAmberSigner();
+    // The signer app needs current_user to apply remembered approvals; the
+    // fresh instance doesn't know the pubkey until it's told.
+    const stored = await idbkv.get<NostrUser>('noteds:loggedin');
+    if (stored?.pubkey) amberSignerInstance.pubkey = stored.pubkey;
     return amberSignerInstance;
   }
   if (loginMethod === 'passkey') {
