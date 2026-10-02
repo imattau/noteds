@@ -39,7 +39,6 @@
     "@0xx0lostcause0xx0/polypack": "^3.0.1",
     "@huggingface/transformers": "^4.2.0",
     "@tauri-apps/api": "^2.12.0",
-    "@tauri-apps/plugin-clipboard-manager": "^2.4.0",
     "@tauri-apps/plugin-geolocation": "^2.4.0",
     "applesauce-core": "^6.1.0",
     "applesauce-loaders": "^6.1.0",

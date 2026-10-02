@@ -1,10 +1,10 @@
 ## Default Permission
 
-Allows launching a NIP-55 signer app via a nostrsigner: URL.
+Allows sending NIP-55 requests to a signer app (Amber etc.).
 
 #### This default permission set includes the following:
 
-- `allow-open-amber-url`
+- `allow-signer-request`
 
 ## Permission Table
 
@@ -18,12 +18,12 @@ Allows launching a NIP-55 signer app via a nostrsigner: URL.
 <tr>
 <td>
 
-`amber-opener:allow-open-amber-url`
+`amber-opener:allow-signer-request`
 
 </td>
 <td>
 
-Enables the open_amber_url command without any pre-configured scope.
+Enables the signer_request command without any pre-configured scope.
 
 </td>
 </tr>
@@ -31,12 +31,12 @@ Enables the open_amber_url command without any pre-configured scope.
 <tr>
 <td>
 
-`amber-opener:deny-open-amber-url`
+`amber-opener:deny-signer-request`
 
 </td>
 <td>
 
-Denies the open_amber_url command without any pre-configured scope.
+Denies the signer_request command without any pre-configured scope.
 
 </td>
 </tr>

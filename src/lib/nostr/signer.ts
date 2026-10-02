@@ -4,7 +4,7 @@ import { loadNostrUser, type NostrUser } from './metadata';
 import type { Event, EventTemplate } from 'nostr-tools';
 import { buildPasskeySignerShim, isPasskeyShim } from './passkeyIdentity';
 import type { PasskeySignerShim } from './passkeyIdentity';
-import type { TauriAmberSigner } from './tauriAmberSigner';
+import type { AmberSession, TauriAmberSigner } from './tauriAmberSigner';
 
 interface NostrSignerLike {
   getPublicKey: () => Promise<string>;
@@ -32,8 +32,21 @@ interface NostrSignerAdapter extends NostrSignerLike {
 
 let passkeySignerShim: PasskeySignerShim | null = null;
 let amberSignerInstance: TauriAmberSigner | null = null;
+let amberRestorePromise: Promise<TauriAmberSigner> | null = null;
 let restoredPasskeyPubkey: string | null = null;
 let hydratedPreferencesPubkey: string | null = null;
+
+const AMBER_SESSION_KEY = 'noteds:amber_session';
+const DEFAULT_SIGNER_PACKAGE = 'com.greenart7c3.nostrsigner';
+
+async function createAmberSigner(session: AmberSession | null): Promise<TauriAmberSigner> {
+  const { TauriAmberSigner } = await import('./tauriAmberSigner');
+  const instance = new TauriAmberSigner(session);
+  instance.onSessionChange = (next) => {
+    void idbkv.set(AMBER_SESSION_KEY, next);
+  };
+  return instance;
+}
 
 function isBrowser(): boolean {
   return typeof window !== 'undefined';
@@ -101,16 +114,28 @@ async function getNostrSigner(prompt = false): Promise<NostrSignerLike | null> {
 
   const loginMethod = await idbkv.get<string>('noteds:login_method');
   if (loginMethod === 'amber') {
-    // The signer app itself holds the key; re-instantiating just re-arms
-    // the clipboard/visibilitychange plumbing used to talk to it, no
-    // ceremony needed like passkey's WebAuthn unlock.
-    const { TauriAmberSigner } = await import('./tauriAmberSigner');
-    amberSignerInstance = new TauriAmberSigner();
-    // The signer app needs current_user to apply remembered approvals; the
-    // fresh instance doesn't know the pubkey until it's told.
-    const stored = await idbkv.get<NostrUser>('noteds:loggedin');
-    if (stored?.pubkey) amberSignerInstance.pubkey = stored.pubkey;
-    return amberSignerInstance;
+    // The signer app itself holds the key; restoring the remembered pubkey
+    // and signer package lets requests go straight to the signer's
+    // ContentResolver (silent once permissions are remembered) instead of
+    // first relaunching it for get_public_key.
+    // Shared so concurrent first calls end up on one instance (and so one
+    // request queue) rather than launching the signer in parallel.
+    amberRestorePromise ??= (async () => {
+      let session = (await idbkv.get<AmberSession>(AMBER_SESSION_KEY)) ?? null;
+      if (!session) {
+        // Sessions from before the signer package was stored.
+        const loggedIn = await idbkv.get<NostrUser>('noteds:loggedin');
+        // Assume Amber, the common case; if it isn't installed the plugin
+        // falls back to letting Android pick the signer.
+        session = loggedIn?.pubkey ? { pubkey: loggedIn.pubkey, signerPackage: DEFAULT_SIGNER_PACKAGE } : null;
+      }
+      const instance = await createAmberSigner(session);
+      amberSignerInstance ??= instance;
+      return amberSignerInstance;
+    })().finally(() => {
+      amberRestorePromise = null;
+    });
+    return amberRestorePromise;
   }
   if (loginMethod === 'passkey') {
     if (prompt) {
@@ -306,9 +331,9 @@ export async function completePasskeySession(secretKey: Uint8Array, pubkey: stri
 
 export async function completeAmberSession(): Promise<string> {
   if (!isBrowser()) throw new Error('Signer app login requires a browser environment.');
-  const { TauriAmberSigner } = await import('./tauriAmberSigner');
-  const instance = new TauriAmberSigner();
+  const instance = await createAmberSigner(null);
   const pubkey = await instance.getPublicKey();
+  amberSignerInstance?.destroy();
   amberSignerInstance = instance;
   await idbkv.set('noteds:login_method', 'amber');
   await updateAccountFromPubkey(pubkey);
@@ -330,5 +355,6 @@ export async function logout(): Promise<void> {
     delete (window as Window & { nostr?: unknown }).nostr;
   }
   await idbkv.del('noteds:login_method');
+  await idbkv.del(AMBER_SESSION_KEY);
   await updateAccountFromPubkey(null);
 }

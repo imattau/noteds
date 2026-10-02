@@ -1,4 +1,4 @@
-const COMMANDS: &[&str] = &["open_amber_url", "query_signer"];
+const COMMANDS: &[&str] = &["signer_request"];
 
 fn main() {
     tauri_plugin::Builder::new(COMMANDS)

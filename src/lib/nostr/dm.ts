@@ -85,9 +85,16 @@ export async function decryptDM(event: NostrEvent, userPubkey: string): Promise<
       tags: event.tags
     };
   } catch (err) {
+    // Let the caller stop asking: otherwise rejecting one decrypt in a
+    // signer app would just relaunch it for the next message.
+    if (isSignerRejection(err)) throw err;
     console.error('Failed to decrypt DM', event.id, err);
     return null;
   }
+}
+
+function isSignerRejection(err: unknown): boolean {
+  return err instanceof Error && err.name === 'SignerRejectedError';
 }
 
 let decryptedDMCache: Record<string, DecryptedDM[]> = {};
@@ -115,7 +122,14 @@ export async function fetchDecryptedDMs(userPubkey: string): Promise<DecryptedDM
 
   for (const event of events) {
     if (cachedIds.has(event.id)) continue;
-    const decryptedEvent = await decryptDM(event, userPubkey);
+    let decryptedEvent: DecryptedDM | null;
+    try {
+      decryptedEvent = await decryptDM(event, userPubkey);
+    } catch (err) {
+      if (!isSignerRejection(err)) throw err;
+      console.warn('Signer rejected DM decryption; skipping the rest');
+      break;
+    }
     if (decryptedEvent) {
       decrypted.push(decryptedEvent);
     }

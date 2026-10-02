@@ -1,17 +1,11 @@
 use tauri::{command, AppHandle, Runtime};
 
-use crate::AmberOpenerExt;
+use crate::{AmberOpenerExt, SignerRequest, SignerResponse};
 
 #[command]
-pub(crate) async fn open_amber_url<R: Runtime>(app: AppHandle<R>, url: String) -> crate::Result<()> {
-    app.amber_opener().open_amber_url(url)
-}
-
-#[command]
-pub(crate) async fn query_signer<R: Runtime>(
+pub(crate) async fn signer_request<R: Runtime>(
     app: AppHandle<R>,
-    uri: String,
-    args: Vec<String>,
-) -> crate::Result<serde_json::Value> {
-    app.amber_opener().query_signer(uri, args)
+    request: SignerRequest,
+) -> crate::Result<SignerResponse> {
+    app.amber_opener().signer_request(request).await
 }

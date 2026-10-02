@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-signer-request"
+description = "Enables the signer_request command without any pre-configured scope."
+commands.allow = ["signer_request"]
+
+[[permission]]
+identifier = "deny-signer-request"
+description = "Denies the signer_request command without any pre-configured scope."
+commands.deny = ["signer_request"]

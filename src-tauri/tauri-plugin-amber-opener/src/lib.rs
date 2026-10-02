@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Manager, Runtime,
@@ -15,6 +16,31 @@ mod error;
 pub use error::Error;
 type Result<T> = std::result::Result<T, Error>;
 
+/// A NIP-55 request (`type` is e.g. `get_public_key`, `sign_event`,
+/// `nip44_decrypt`). `signer_package` is the signer app's package name, once
+/// known from a `get_public_key` response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignerRequest {
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub content: String,
+    pub pubkey: Option<String>,
+    pub current_user: Option<String>,
+    pub id: Option<String>,
+    pub signer_package: Option<String>,
+    /// JSON permission list, only meaningful for `get_public_key`.
+    pub permissions: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignerResponse {
+    pub result: String,
+    pub package: Option<String>,
+    pub event: Option<String>,
+}
+
 pub struct AmberOpener<R: Runtime> {
     #[cfg(not(target_os = "android"))]
     _marker: std::marker::PhantomData<fn() -> R>,
@@ -23,37 +49,20 @@ pub struct AmberOpener<R: Runtime> {
 }
 
 impl<R: Runtime> AmberOpener<R> {
-    /// Launches the given `nostrsigner:` URL the same way a browser resolving
-    /// an `intent://` link would, so Amber's web-app request parser (which
-    /// requires the Browser.EXTRA_APPLICATION_ID extra) handles it correctly.
-    pub fn open_amber_url(&self, url: String) -> Result<()> {
+    /// Sends a NIP-55 request to the signer app: silently via its
+    /// ContentResolver endpoint when the user has remembered the permission,
+    /// otherwise by launching it with startActivityForResult.
+    pub async fn signer_request(&self, request: SignerRequest) -> Result<SignerResponse> {
         #[cfg(target_os = "android")]
         {
             self.handle
-                .run_mobile_plugin("openAmberUrl", serde_json::json!({ "url": url }))
+                .run_mobile_plugin_async("signerRequest", request)
+                .await
                 .map_err(Into::into)
         }
         #[cfg(not(target_os = "android"))]
         {
-            let _ = url;
-            Err(Error::UnsupportedPlatform)
-        }
-    }
-}
-
-impl<R: Runtime> AmberOpener<R> {
-    /// Queries a NIP-55 signer's content provider (no UI). Returns
-    /// `{ status: "ok" | "rejected" | "unavailable", result?: string }`.
-    pub fn query_signer(&self, uri: String, args: Vec<String>) -> Result<serde_json::Value> {
-        #[cfg(target_os = "android")]
-        {
-            self.handle
-                .run_mobile_plugin("querySigner", serde_json::json!({ "uri": uri, "args": args }))
-                .map_err(Into::into)
-        }
-        #[cfg(not(target_os = "android"))]
-        {
-            let _ = (uri, args);
+            let _ = request;
             Err(Error::UnsupportedPlatform)
         }
     }
@@ -83,6 +92,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![commands::open_amber_url, commands::query_signer])
+        .invoke_handler(tauri::generate_handler![commands::signer_request])
         .build()
 }

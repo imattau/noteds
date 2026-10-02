@@ -2,7 +2,7 @@
 name = "tauri-plugin-amber-opener"
 version = "0.1.0"
 edition = "2021"
-description = "Launches NIP-55 signer apps (e.g. Amber) via nostrsigner: URLs with the Browser.EXTRA_APPLICATION_ID extra Amber requires for its web-app request parser."
+description = "Sends NIP-55 requests to Android signer apps (e.g. Amber) via their ContentResolver endpoints, falling back to startActivityForResult."
 links = "tauri-plugin-amber-opener"
 
 [lib]

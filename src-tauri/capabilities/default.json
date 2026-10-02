@@ -6,7 +6,6 @@
   "permissions": [
     "core:default",
     "amber-opener:default",
-    "clipboard-manager:allow-read-text",
     "geolocation:allow-check-permissions",
     "geolocation:allow-request-permissions",
     "geolocation:allow-get-current-position"

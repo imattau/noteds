@@ -98,24 +98,16 @@ actual Android device/emulator before relying on the app day-to-day:
 - **Signer App (Amber/NIP-55) login**: on the Android build, `isTauri()`
   (`src/lib/platform.ts`) hides the NIP-07 extension and passkey login
   options — neither works reliably inside Tauri's Android WebView — and
-  shows "Signer App" instead. That path launches Amber via a custom native
-  plugin (`src-tauri/tauri-plugin-amber-opener`) rather than the
-  `intent://` trick browsers use, because Amber requires the launching
-  Intent to carry `Browser.EXTRA_APPLICATION_ID`, which only a real browser
-  sets. Confirm on a real device: Amber launches, returns control to
-  noteds, and the pubkey/signature comes back correctly via the OS
-  clipboard (`@tauri-apps/plugin-clipboard-manager`, not the Web Clipboard
-  API — `navigator.clipboard.readText()` is unreliable inside the WebView).
-  See `src/lib/nostr/tauriAmberSigner.ts`. This is ported from
-  [imattau/Mangatsu](https://github.com/imattau/Mangatsu)'s working
-  implementation but hasn't been verified against noteds' own build yet.
-- **Signer approvals persisting**: requests first try Amber's NIP-55
-  content resolver (`plugin:amber-opener|query_signer`), which runs silently
-  once the user ticks "remember my choice" in Amber; otherwise they fall back
-  to the intent flow, one request at a time. Confirm on a device that after
-  approving once with "remember", opening Messages / My Listings decrypts
-  without switching to Amber. The content-resolver path is untested on
-  hardware.
+  shows "Signer App" instead. That path talks to Amber through a custom
+  native plugin (`src-tauri/tauri-plugin-amber-opener`) using NIP-55's
+  native-app flow: once the signer's package is known (from the login
+  `get_public_key` response) each request first tries the signer's
+  ContentResolver endpoint, which answers silently when the user has
+  remembered the permission, and otherwise launches Amber with
+  `startActivityForResult`. No clipboard is involved. Confirm on a real
+  device: login asks for permissions once, and with "remember" ticked,
+  opening Messages / My Listings decrypts without switching to Amber.
+  See `src/lib/nostr/tauriAmberSigner.ts`.
 - **OPFS availability**: the local browse graph
   ([Polypack](https://github.com/0xx0lostcause0xx0/polypack)) persists to
   OPFS when available and falls back to memory otherwise — confirm which
