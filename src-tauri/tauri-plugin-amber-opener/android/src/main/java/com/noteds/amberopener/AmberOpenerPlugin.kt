@@ -8,6 +8,7 @@ import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
+import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 
 @InvokeArg
@@ -24,6 +25,12 @@ class OpenAmberUrlArgs {
  * extras instead, finds none, and rejects it as malformed. Tauri's stock
  * opener plugin has no way to attach this extra, hence this plugin.
  */
+@InvokeArg
+class QuerySignerArgs {
+    lateinit var uri: String
+    lateinit var args: Array<String>
+}
+
 @TauriPlugin
 class AmberOpenerPlugin(private val activity: Activity) : Plugin(activity) {
     @Command
@@ -37,6 +44,48 @@ class AmberOpenerPlugin(private val activity: Activity) : Plugin(activity) {
             invoke.resolve()
         } catch (ex: Exception) {
             invoke.reject(ex.message)
+        }
+    }
+
+    /**
+     * NIP-55 content resolver: asks the signer app to perform a request in
+     * the background, with no UI and no app switch. The signer only answers
+     * when the user previously chose "remember my choice" for this app and
+     * request type; otherwise it returns a null cursor or a `rejected`
+     * column, which the caller treats as "fall back to the intent flow".
+     */
+    @Command
+    fun querySigner(invoke: Invoke) {
+        try {
+            val args = invoke.parseArgs(QuerySignerArgs::class.java)
+            val result = JSObject()
+            val cursor = activity.contentResolver.query(args.uri.toUri(), null, null, args.args, null)
+            if (cursor == null) {
+                result.put("status", "unavailable")
+            } else {
+                cursor.use {
+                    if (!it.moveToFirst()) {
+                        result.put("status", "unavailable")
+                    } else if (it.getColumnIndex("rejected") >= 0) {
+                        result.put("status", "rejected")
+                    } else {
+                        val index = it.getColumnIndex("result")
+                        val value = if (index >= 0) it.getString(index) else null
+                        if (value.isNullOrEmpty()) {
+                            result.put("status", "unavailable")
+                        } else {
+                            result.put("status", "ok")
+                            result.put("result", value)
+                        }
+                    }
+                }
+            }
+            invoke.resolve(result)
+        } catch (ex: Exception) {
+            // Signer not installed / provider not exported: caller falls back.
+            val result = JSObject()
+            result.put("status", "unavailable")
+            invoke.resolve(result)
         }
     }
 }

@@ -41,6 +41,24 @@ impl<R: Runtime> AmberOpener<R> {
     }
 }
 
+impl<R: Runtime> AmberOpener<R> {
+    /// Queries a NIP-55 signer's content provider (no UI). Returns
+    /// `{ status: "ok" | "rejected" | "unavailable", result?: string }`.
+    pub fn query_signer(&self, uri: String, args: Vec<String>) -> Result<serde_json::Value> {
+        #[cfg(target_os = "android")]
+        {
+            self.handle
+                .run_mobile_plugin("querySigner", serde_json::json!({ "uri": uri, "args": args }))
+                .map_err(Into::into)
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = (uri, args);
+            Err(Error::UnsupportedPlatform)
+        }
+    }
+}
+
 pub trait AmberOpenerExt<R: Runtime> {
     fn amber_opener(&self) -> &AmberOpener<R>;
 }
@@ -65,6 +83,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![commands::open_amber_url])
+        .invoke_handler(tauri::generate_handler![commands::open_amber_url, commands::query_signer])
         .build()
 }
