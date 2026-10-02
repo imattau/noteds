@@ -1,6 +1,6 @@
 [package]
 name = "noteds"
-version = "0.1.3"
+version = "0.1.4"
 description = "Noteds: a peer-to-peer classifieds marketplace built on Nostr"
 authors = ["noteds"]
 license = ""
