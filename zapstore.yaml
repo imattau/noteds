@@ -10,6 +10,8 @@ license: ""
 website: https://github.com/imattau/noteds
 icon: src-tauri/icons/icon.png
 release_source: https://github.com/imattau/noteds
+# zsp publishes the CHANGELOG.md section matching the APK's version name.
+release_notes: ./CHANGELOG.md
 metadata_sources: []
 # zsp metadata guidance
 # Add any of these optional fields when they are available:

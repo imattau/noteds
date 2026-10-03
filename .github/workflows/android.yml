@@ -272,10 +272,36 @@ jobs:
             src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
           if-no-files-found: error
 
+      # The same CHANGELOG.md section zsp sends to Zapstore becomes the GitHub
+      # Release body, and a tag without one fails here rather than shipping
+      # a release with no notes.
+      - name: Extract release notes
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${VERSION#v}"
+          awk -v version="$VERSION" '
+            /^## / {
+              header = $0
+              sub(/^## \[?v?/, "", header)
+              split(header, parts, /[] ]/)
+              if (in_section) exit
+              if (parts[1] == version) { in_section = 1; next }
+            }
+            in_section { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/release-notes.md"; then
+            echo "::error::CHANGELOG.md has no notes for $VERSION"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/release-notes.md"
+
       - name: Attach to GitHub Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          body_path: ${{ runner.temp }}/release-notes.md
           files: |
             src-tauri/gen/android/app/build/outputs/apk/**/*.apk
             src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
