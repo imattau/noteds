@@ -26,7 +26,10 @@
   const PAGE_SIZE = 30;
   let shownCount = $state(PAGE_SIZE);
 
-  function loadMore() {
+  // Reveal listings already loaded first; once none are hidden, page older
+  // ones in from relays.
+  async function loadMore() {
+    if (browseData.selectedItems.length <= shownCount) await browseFeed.loadOlder();
     shownCount += PAGE_SIZE;
   }
 
@@ -201,16 +204,25 @@
     {/each}
   </div>
 
-  {#if selectedCount > visibleItems.length}
+  {#if selectedCount > visibleItems.length || !browseFeed.reachedOldest}
     <div class="mt-5 flex justify-center">
       <button
         type="button"
-        class="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
+        class="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60"
         onclick={loadMore}
+        disabled={browseFeed.loadingOlder}
       >
-        Show more ({selectedCount - visibleItems.length} remaining)
+        {#if browseFeed.loadingOlder}
+          Loading older listings…
+        {:else if selectedCount > visibleItems.length}
+          Show more ({selectedCount - visibleItems.length} remaining)
+        {:else}
+          Load older listings
+        {/if}
       </button>
     </div>
+  {:else if visibleItems.length > 0}
+    <p class="mt-5 text-center text-xs text-slate-500">No older listings on your relays.</p>
   {/if}
 
   {#if visibleItems.length === 0}

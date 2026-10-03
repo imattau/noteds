@@ -1,7 +1,7 @@
 import { finalizeEvent, generateSecretKey, getPublicKey, type EventTemplate, type NostrEvent } from 'nostr-tools/pure';
 import { getTagOr } from './utils';
 import { getActiveRelays } from './relays';
-import { collectEvents } from './requestEvents';
+import { collectEvents, settleEarly } from './requestEvents';
 import { eventStore, relayPool } from './runtime';
 import { signer } from './signer';
 import { cacheBrowseReviews, queryBrowseReviewsBySeller } from './browseCacheStore';
@@ -128,11 +128,16 @@ export async function publishSellerReview(input: SellerReviewInput, options: Pub
 }
 
 export async function loadSellerReviews(sellerPubkey: string): Promise<SellerReview[]> {
+  const relays = getActiveRelays();
   const events = await collectEvents(
-    relayPool.request(getActiveRelays(), {
-      kinds: [SELLER_REVIEW_KIND],
-      '#p': [sellerPubkey]
-    }),
+    relayPool.request(
+      relays,
+      {
+        kinds: [SELLER_REVIEW_KIND],
+        '#p': [sellerPubkey]
+      },
+      settleEarly(relays)
+    ),
     SELLER_REVIEW_LOAD_TIMEOUT_MS
   );
 

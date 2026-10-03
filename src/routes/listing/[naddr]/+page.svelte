@@ -13,7 +13,7 @@
   import { queryRelatedBrowseItems, type RelatedBrowseItem } from '$lib/nostr/browseCacheStore';
   import { getActiveRelays } from '$lib/nostr/relays';
   import { eventStore, relayPool } from '$lib/nostr/runtime';
-  import { collectEvents } from '$lib/nostr/requestEvents';
+  import { collectEvents, settleEarly } from '$lib/nostr/requestEvents';
   import type { NostrEvent } from 'nostr-tools';
   import { marked } from 'marked';
   import DOMPurify from 'isomorphic-dompurify';
@@ -74,12 +74,17 @@
       eventId = cached.eventId;
     });
 
+    const relays = getActiveRelays();
     collectEvents(
-      relayPool.request(getActiveRelays(), {
-        kinds: [data.kind],
-        authors: [data.pubkey],
-        '#d': [data.identifier]
-      }),
+      relayPool.request(
+        relays,
+        {
+          kinds: [data.kind],
+          authors: [data.pubkey],
+          '#d': [data.identifier]
+        },
+        settleEarly(relays)
+      ),
       LISTING_LOAD_TIMEOUT_MS
     ).then((events) => {
       if (cancelled) return;

@@ -1,7 +1,7 @@
 import { nip19 } from 'nostr-tools';
 import type { NostrEvent } from 'nostr-tools';
 import { getProfileRelays } from './relays';
-import { collectEvents } from './requestEvents';
+import { collectEvents, settleEarly } from './requestEvents';
 import { eventStore, relayPool } from './runtime';
 
 const PROFILE_CACHE_KEY = 'noteds:profiles:v2';
@@ -161,7 +161,7 @@ async function fetchProfileBatch(pubkeys: string[], resolvers: Map<string, (meta
     const relays = getProfileRelays();
     if (relays.length > 0) {
       const events = await collectEvents(
-        relayPool.request(relays, { kinds: [0], authors: pubkeys }),
+        relayPool.request(relays, { kinds: [0], authors: pubkeys }, settleEarly(relays)),
         PROFILE_LOAD_TIMEOUT_MS
       );
       for (const event of events) {

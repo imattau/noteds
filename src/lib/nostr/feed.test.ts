@@ -1,8 +1,12 @@
+import { of } from 'rxjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_LISTING_BACKFILL_DAYS,
   DEFAULT_LISTING_FEED_LIMIT,
+  OLDER_LISTINGS_PAGE_SIZE,
   buildListingFilter,
+  fetchListingDeletions,
+  fetchOlderListings,
   subscribeToListingDeletions,
   subscribeToListings
 } from './feed';
@@ -77,4 +81,31 @@ describe('buildListingFilter', () => {
       since: 1000
     });
   });
+
+  it('pages older listings with until and a page-sized limit', async () => {
+    const request = vi.spyOn(relayPool, 'request').mockReturnValue(of() as any);
+
+    await fetchOlderListings(['wss://relay.example/'], { categories: ['Services'] }, 1234);
+
+    expect(request.mock.calls[0][1]).toEqual({
+      kinds: [30402],
+      '#t': ['Services'],
+      until: 1234,
+      limit: OLDER_LISTINGS_PAGE_SIZE
+    });
+  });
+
+  it('checks deletions for paged listings by id and address', async () => {
+    const request = vi.spyOn(relayPool, 'request').mockReturnValue(of() as any);
+
+    await fetchListingDeletions(['wss://relay.example/'], ['event-1'], ['30402:pubkey:listing-1']);
+    expect(request.mock.calls[0][1]).toEqual([
+      { kinds: [5], '#e': ['event-1'] },
+      { kinds: [5], '#a': ['30402:pubkey:listing-1'] }
+    ]);
+
+    expect(await fetchListingDeletions(['wss://relay.example/'], [], [])).toEqual([]);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
 });
+

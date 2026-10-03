@@ -8,8 +8,14 @@ import {
   primeBrowseCacheMemory,
   queryBrowseCache
 } from '$lib/nostr/browseCache';
-import { DEFAULT_LISTING_BACKFILL_DAYS, subscribeToListingDeletions, subscribeToListings } from '$lib/nostr/feed';
-import { getDeletedEventIds } from '$lib/nostr/deletions';
+import {
+  DEFAULT_LISTING_BACKFILL_DAYS,
+  fetchListingDeletions,
+  fetchOlderListings,
+  subscribeToListingDeletions,
+  subscribeToListings
+} from '$lib/nostr/feed';
+import { getDeletedAddresses, getDeletedEventIds } from '$lib/nostr/deletions';
 import { parseListingEvent, type ListingInput } from '$lib/nostr/listings';
 import { getActiveRelays } from '$lib/nostr/relays';
 import type { ListingFilters } from '$lib/nostr/searchParams';
@@ -24,9 +30,8 @@ interface FeedItem {
 /** Upper bound on listings held in memory; the newest are kept. */
 const MAX_FEED_ITEMS = 1000;
 
-/** Feed items are always kept newest first, so pages don't need to re-sort. */
-function newestFirst(list: FeedItem[]): FeedItem[] {
-  return list.sort((a, b) => b.created_at - a.created_at).slice(0, MAX_FEED_ITEMS);
+function listingAddress(item: FeedItem): string {
+  return `30402:${item.pubkey}:${item.listing.id}`;
 }
 
 export function useBrowseFeed(options: {
@@ -38,6 +43,19 @@ export function useBrowseFeed(options: {
   let items = $state<FeedItem[]>([]);
   let deletedEventIds = $state<string[]>([]);
   let browseCacheUpdatedAt = 0;
+  // Each older page raises the cap by what it added, so paged-in listings
+  // aren't trimmed straight back out.
+  let extraCapacity = 0;
+  let loadingOlder = $state(false);
+  let reachedOldest = $state(false);
+  let olderRequestToken = 0;
+  /** Oldest created_at any older page has returned, so pages never repeat. */
+  let olderCursor: number | null = null;
+
+  /** Feed items are always kept newest first, so pages don't need to re-sort. */
+  function newestFirst(list: FeedItem[]): FeedItem[] {
+    return list.sort((a, b) => b.created_at - a.created_at).slice(0, MAX_FEED_ITEMS + extraCapacity);
+  }
 
   $effect(() => {
     const browseCache = loadBrowseCacheSnapshot();
@@ -175,6 +193,14 @@ export function useBrowseFeed(options: {
     const since = options.since();
     const geohashPrefix = feedGeohashPrefix;
     const categories = JSON.parse(feedCategoriesKey) as string[];
+    untrack(() => {
+      // A new relay scope starts paging from scratch.
+      olderRequestToken += 1;
+      extraCapacity = 0;
+      olderCursor = null;
+      loadingOlder = false;
+      reachedOldest = false;
+    });
     const unsubscribe = subscribeToListings(
       getActiveRelays(),
       { since, categories, geohashPrefix },
@@ -200,8 +226,92 @@ export function useBrowseFeed(options: {
     });
   });
 
+  function inFeedScope(item: FeedItem, categories: string[], geohashPrefix: string | undefined): boolean {
+    if (categories.length > 0 && !item.listing.categories.some((category) => categories.includes(category))) return false;
+    return !geohashPrefix || (item.listing.geohash ?? '').startsWith(geohashPrefix);
+  }
+
+  /**
+   * Fetch the page of listings just older than the oldest one loaded for the
+   * current relay scope. Resolves to how many new listings were added.
+   */
+  async function loadOlder(): Promise<number> {
+    if (loadingOlder || reachedOldest) return 0;
+    const token = ++olderRequestToken;
+    const geohashPrefix = feedGeohashPrefix;
+    const categories = JSON.parse(feedCategoriesKey) as string[];
+    const scoped = items.filter((item) => inFeedScope(item, categories, geohashPrefix));
+    let until = Math.floor(Date.now() / 1000);
+    for (const item of scoped) until = Math.min(until, item.created_at);
+    if (olderCursor !== null) until = Math.min(until, olderCursor);
+    loadingOlder = true;
+
+    try {
+      const relays = getActiveRelays();
+      const events = await fetchOlderListings(relays, { categories, geohashPrefix }, until);
+      if (token !== olderRequestToken) return 0;
+      for (const event of events) {
+        olderCursor = Math.min(olderCursor ?? event.created_at, event.created_at);
+      }
+
+      const known = new Set(items.map((item) => `${item.listing.id}:${item.pubkey}`));
+      const deleted = new Set(deletedEventIds);
+      const page = new Map<string, FeedItem>();
+      for (const event of events) {
+        const item: FeedItem = {
+          listing: parseListingEvent(event),
+          pubkey: event.pubkey,
+          created_at: event.created_at,
+          eventId: event.id
+        };
+        const key = `${item.listing.id}:${item.pubkey}`;
+        if (known.has(key) || deleted.has(item.eventId)) continue;
+        const existing = page.get(key);
+        if (!existing || item.created_at > existing.created_at) page.set(key, item);
+      }
+      if (page.size === 0) {
+        reachedOldest = true;
+        return 0;
+      }
+
+      // Older pages predate the live deletion subscription's window.
+      const pageItems = Array.from(page.values());
+      const deletions = await fetchListingDeletions(
+        relays,
+        pageItems.map((item) => item.eventId),
+        pageItems.map(listingAddress)
+      );
+      if (token !== olderRequestToken) return 0;
+      const removed = new Set<string>();
+      for (const deletion of deletions) {
+        const ids = new Set(getDeletedEventIds(deletion));
+        const addresses = new Set(getDeletedAddresses(deletion));
+        for (const item of pageItems) {
+          // Only the author can delete a listing; an address deletion covers
+          // versions published up to the deletion.
+          if (deletion.pubkey !== item.pubkey) continue;
+          if (ids.has(item.eventId) || (addresses.has(listingAddress(item)) && item.created_at <= deletion.created_at)) {
+            removed.add(item.eventId);
+          }
+        }
+      }
+      const added = pageItems.filter((item) => !removed.has(item.eventId));
+      if (removed.size > 0) addDeletions(Array.from(removed));
+      if (added.length === 0) return 0;
+
+      extraCapacity += added.length;
+      items = newestFirst([...items, ...added]);
+      return added.length;
+    } finally {
+      if (token === olderRequestToken) loadingOlder = false;
+    }
+  }
+
   return {
     get items() { return items; },
-    get deletedEventIds() { return deletedEventIds; }
+    get deletedEventIds() { return deletedEventIds; },
+    get loadingOlder() { return loadingOlder; },
+    get reachedOldest() { return reachedOldest; },
+    loadOlder
   };
 }
