@@ -19,6 +19,7 @@ vi.mock('./browseCacheStore', () => ({
     items: Array.from(storeItems.values()).filter((item) => !deletedEventIds.has(item.eventId)),
     deletedEventIds: Array.from(deletedEventIds)
   }),
+  loadBrowseDeletedEventIds: async () => Array.from(deletedEventIds),
   loadLegacyBrowseCacheStore: async () => ({ items: [], deletedEventIds: [] }),
   pruneBrowseCacheStore: async () => undefined,
   upsertBrowseItems: async (items: BrowseItem[]) => {
@@ -55,10 +56,12 @@ vi.mock('./browseCacheStore', () => ({
 import {
   cacheBrowseDeletions,
   cacheBrowseItem,
+  cacheBrowseItems,
   flushBrowseCacheSnapshot,
   loadBrowseCache,
   loadBrowseCacheSnapshot,
   mergeBrowseCaches,
+  normalizeDeletedEventIds,
   queryBrowseCache,
   resetBrowseCacheMemoryForTests
 } from './browseCache';
@@ -162,5 +165,22 @@ describe('browse cache', () => {
     expect(merged.items[0].created_at).toBe(sampleItem.created_at + 20);
     expect(merged.deletedEventIds).toEqual(expect.arrayContaining(['new-event', 'old-event']));
     expect(merged.updatedAt).toBe(2);
+  });
+
+  it('keeps the newest deleted ids when over the cap', () => {
+    const ids = Array.from({ length: 600 }, (_, index) => `event-${index}`);
+    const normalized = normalizeDeletedEventIds(ids);
+    expect(normalized).toHaveLength(500);
+    expect(normalized[0]).toBe('event-100');
+    expect(normalized.at(-1)).toBe('event-599');
+  });
+
+  it('keeps the newest version when a batch repeats a listing', async () => {
+    await cacheBrowseItems([
+      { ...sampleItem, eventId: 'newer', created_at: sampleItem.created_at + 10 },
+      { ...sampleItem, eventId: 'older' }
+    ]);
+    const cache = await loadBrowseCache();
+    expect(cache.items.map((entry) => entry.eventId)).toEqual(['newer']);
   });
 });

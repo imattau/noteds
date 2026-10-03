@@ -22,9 +22,12 @@
     categoryScope: () => category
   });
 
+  // Render listings a page at a time; the feed itself is already in memory.
+  const PAGE_SIZE = 30;
+  let shownCount = $state(PAGE_SIZE);
+
   function loadMore() {
-    const sevenDays = 7 * 24 * 60 * 60;
-    since = (since ?? Math.floor(Date.now() / 1000)) - sevenDays;
+    shownCount += PAGE_SIZE;
   }
 
   function handleFiltersChange(changes: ListingFilters) {
@@ -98,7 +101,12 @@
     }, 0);
     return () => clearTimeout(timeoutId);
   });
-  let visibleItems = $derived([...browseData.selectedItems].sort((a, b) => b.created_at - a.created_at));
+  $effect(() => {
+    void filters;
+    void category;
+    shownCount = PAGE_SIZE;
+  });
+  let visibleItems = $derived(browseData.selectedItems.slice(0, shownCount));
   let subcategoryCounts = $derived(
     getSubcategories(category).map((value) => ({
       value,
@@ -109,7 +117,7 @@
     }))
   );
 
-  let selectedCount = $derived(visibleItems.length);
+  let selectedCount = $derived(browseData.selectedItems.length);
 </script>
 
 <svelte:head>
@@ -185,13 +193,6 @@
         {/if}
       </p>
     </div>
-    <button
-      type="button"
-      class="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
-      onclick={loadMore}
-    >
-      Load more
-    </button>
   </div>
 
   <div class="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -199,6 +200,18 @@
       <ListingCard listing={item.listing} pubkey={item.pubkey} created_at={item.created_at} />
     {/each}
   </div>
+
+  {#if selectedCount > visibleItems.length}
+    <div class="mt-5 flex justify-center">
+      <button
+        type="button"
+        class="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-medium text-slate-600 transition-colors hover:bg-slate-50"
+        onclick={loadMore}
+      >
+        Show more ({selectedCount - visibleItems.length} remaining)
+      </button>
+    </div>
+  {/if}
 
   {#if visibleItems.length === 0}
     <p class="mt-4 text-sm text-slate-500">No listings match this category and filter combination.</p>

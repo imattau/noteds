@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_LISTING_BACKFILL_DAYS, buildListingFilter, subscribeToListings } from './feed';
+import {
+  DEFAULT_LISTING_BACKFILL_DAYS,
+  DEFAULT_LISTING_FEED_LIMIT,
+  buildListingFilter,
+  subscribeToListingDeletions,
+  subscribeToListings
+} from './feed';
 import { relayPool } from './runtime';
 
 afterEach(() => {
@@ -53,7 +59,22 @@ describe('buildListingFilter', () => {
 
     expect(relayPool.subscription).toHaveBeenCalledWith(['wss://relay.example/'], {
       kinds: [30402],
-      since: 1_700_000_000 - DEFAULT_LISTING_BACKFILL_DAYS * 24 * 60 * 60
+      since: 1_700_000_000 - DEFAULT_LISTING_BACKFILL_DAYS * 24 * 60 * 60,
+      limit: DEFAULT_LISTING_FEED_LIMIT
+    });
+  });
+
+  it('scopes the deletion subscription to listing deletions', () => {
+    const onEvent = vi.fn();
+    const subscription = { subscribe: vi.fn(() => ({ unsubscribe: vi.fn() })) };
+    vi.spyOn(relayPool, 'subscription').mockReturnValue(subscription as any);
+
+    subscribeToListingDeletions(['wss://relay.example/'], 1000, onEvent);
+
+    expect(relayPool.subscription).toHaveBeenCalledWith(['wss://relay.example/'], {
+      kinds: [5],
+      '#k': ['30402'],
+      since: 1000
     });
   });
 });

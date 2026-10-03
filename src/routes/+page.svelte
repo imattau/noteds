@@ -113,9 +113,7 @@
       theme: categoryThemes[index % categoryThemes.length]
     }))
   );
-  let selectedItems = $derived([...browseData.selectedItems].sort((a, b) => b.created_at - a.created_at));
-
-  let activeSelectionCount = $derived(selectedItems.length);
+  let activeSelectionCount = $derived(browseData.selectedItems.length);
 </script>
 
 <section class="overflow-visible rounded-[2rem] border border-slate-200 bg-[linear-gradient(180deg,#f8fafc_0%,#ffffff_100%)] px-5 py-6 shadow-sm sm:px-8 sm:py-8">

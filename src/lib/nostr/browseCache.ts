@@ -2,6 +2,7 @@ import type { BrowseItem } from './browseCounts';
 import type { ListingFilters } from './searchParams';
 import {
   getBrowseItemFromStore,
+  loadBrowseDeletedEventIds,
   loadLegacyBrowseCacheStore,
   loadBrowseCacheStore,
   pruneBrowseCacheStore,
@@ -51,10 +52,10 @@ function sortAndClampItems(items: BrowseItem[], maxItems = Number.POSITIVE_INFIN
     .slice(0, maxItems);
 }
 
-function normalizeDeletedEventIds(eventIds: string[]) {
+/** Deleted ids are ordered oldest to newest; the cap keeps the newest ones. */
+export function normalizeDeletedEventIds(eventIds: string[]) {
   return Array.from(new Set(eventIds.filter((eventId) => typeof eventId === 'string' && eventId.length > 0))).slice(
-    0,
-    MAX_CACHED_DELETIONS
+    -MAX_CACHED_DELETIONS
   );
 }
 
@@ -156,6 +157,8 @@ function getFallbackBrowseRecord(filters: BrowseQueryFilters, categoryScope?: st
 }
 
 export function loadBrowseCacheSnapshot(): BrowseCacheRecord {
+  // The in-memory record is at least as fresh as localStorage; skip the parse.
+  if (memoryCache) return memoryCache;
   const snapshot = readSnapshot();
   memoryCache = snapshot;
   return snapshot;
@@ -218,8 +221,9 @@ export async function loadBrowseCache(): Promise<BrowseCacheRecord> {
 
 export function mergeBrowseCaches(current: BrowseCacheRecord, incoming: BrowseCacheRecord): BrowseCacheRecord {
   const deletedEventIds = normalizeDeletedEventIds([...current.deletedEventIds, ...incoming.deletedEventIds]);
-  const filteredCurrent = current.items.filter((item) => !deletedEventIds.includes(item.eventId));
-  const filteredIncoming = incoming.items.filter((item) => !deletedEventIds.includes(item.eventId));
+  const deleted = new Set(deletedEventIds);
+  const filteredCurrent = current.items.filter((item) => !deleted.has(item.eventId));
+  const filteredIncoming = incoming.items.filter((item) => !deleted.has(item.eventId));
   return normalizeBrowseCache({
     items: [...filteredCurrent, ...filteredIncoming],
     deletedEventIds,
@@ -282,11 +286,13 @@ function matchesSubcategories(item: BrowseItem, subcategories: string[]) {
 
 export async function queryBrowseCache(filters: BrowseQueryFilters, categoryScope?: string): Promise<BrowseCacheRecord> {
   try {
-    const rankedItems = await queryHybridBrowseItems(filters, categoryScope, MAX_CACHED_ITEMS);
-    const indexed = await loadBrowseCacheStore();
+    const [rankedItems, deletedEventIds] = await Promise.all([
+      queryHybridBrowseItems(filters, categoryScope, MAX_CACHED_ITEMS),
+      loadBrowseDeletedEventIds()
+    ]);
     return normalizeBrowseCache({
       items: rankedItems,
-      deletedEventIds: indexed.deletedEventIds,
+      deletedEventIds,
       updatedAt: 0
     });
   } catch (error) {
@@ -320,7 +326,7 @@ export async function cacheBrowseItems(items: BrowseItem[]): Promise<void> {
     return;
   }
 
-  let current = await loadBrowseCache();
+  const current = await loadBrowseCache();
   try {
     await upsertBrowseItems(items);
     await pruneBrowseCacheStore(MAX_CACHED_ITEMS, MAX_CACHED_DELETIONS);
@@ -328,11 +334,9 @@ export async function cacheBrowseItems(items: BrowseItem[]): Promise<void> {
     console.warn('Browse cache IndexedDB unavailable; falling back to snapshot cache.', error);
   }
 
-  for (const item of items) {
-    current = mergeBrowseItemIntoRecord(current, item);
-  }
-  primeBrowseCacheMemory(current);
-  scheduleSnapshotWrite(current);
+  const next = mergeBrowseItemsIntoRecord(current, items);
+  primeBrowseCacheMemory(next);
+  scheduleSnapshotWrite(next);
 }
 
 export async function cacheBrowseDeletions(eventIds: string[]): Promise<void> {
@@ -353,21 +357,26 @@ export async function cacheBrowseDeletions(eventIds: string[]): Promise<void> {
   scheduleSnapshotWrite(next);
 }
 
-function mergeBrowseItemIntoRecord(record: BrowseCacheRecord, item: BrowseItem): BrowseCacheRecord {
-  const itemKey = getItemKey(item);
-  const items = record.items.filter((existing) => getItemKey(existing) !== itemKey);
-  const deletedEventIds = record.deletedEventIds.filter((eventId) => eventId !== item.eventId);
-  items.unshift(item);
+/** Merge a batch in one pass; within the batch the newest version of a listing wins. */
+function mergeBrowseItemsIntoRecord(record: BrowseCacheRecord, items: BrowseItem[]): BrowseCacheRecord {
+  const incoming = new Map<string, BrowseItem>();
+  for (const item of items) {
+    const key = getItemKey(item);
+    const existing = incoming.get(key);
+    if (!existing || item.created_at >= existing.created_at) incoming.set(key, item);
+  }
+  const incomingEventIds = new Set(Array.from(incoming.values(), (item) => item.eventId));
   return normalizeBrowseCache({
-    items,
-    deletedEventIds,
+    items: [...incoming.values(), ...record.items.filter((existing) => !incoming.has(getItemKey(existing)))],
+    deletedEventIds: record.deletedEventIds.filter((eventId) => !incomingEventIds.has(eventId)),
     updatedAt: Date.now()
   });
 }
 
 function mergeBrowseDeletionsIntoRecord(record: BrowseCacheRecord, eventIds: string[]): BrowseCacheRecord {
   const deletedEventIds = normalizeDeletedEventIds([...record.deletedEventIds, ...eventIds]);
-  const items = record.items.filter((item) => !deletedEventIds.includes(item.eventId));
+  const deleted = new Set(deletedEventIds);
+  const items = record.items.filter((item) => !deleted.has(item.eventId));
   return normalizeBrowseCache({
     items,
     deletedEventIds,

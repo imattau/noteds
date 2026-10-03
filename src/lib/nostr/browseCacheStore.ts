@@ -92,6 +92,8 @@ export function setBrowseEmbeddingProvider(provider: BrowseEmbeddingProvider): v
 let graph: PolyGraph | null = null;
 let graphPromise: Promise<PolyGraph> | null = null;
 let writeTail: Promise<void> = Promise.resolve();
+/** Set when listings are removed, so the next prune sweeps unreferenced shared nodes. */
+let sharedNodesMayBeOrphaned = false;
 
 function enqueueWrite<T>(operation: () => Promise<T>): Promise<T> {
   const next = writeTail.then(operation);
@@ -224,7 +226,8 @@ async function getGraph(): Promise<PolyGraph> {
       instance.defineIndex({ name: 'listing-event-id', nodeType: LISTING_NODE_TYPE, fields: ['eventId'] });
       instance.defineIndex({ name: 'listing-pubkey', nodeType: LISTING_NODE_TYPE, fields: ['pubkey'] });
       instance.defineIndex({ name: 'listing-created-at', nodeType: LISTING_NODE_TYPE, fields: ['created_at'] });
-      await backfillListingEmbeddings(instance);
+      // Vectors from another provider are left in place and ignored at query
+      // time; reindexBrowseEmbeddings() upgrades them when a provider loads.
       graph = instance;
       return instance;
     })();
@@ -300,15 +303,27 @@ function addListingRelations(target: GraphMutator, item: BrowseItem) {
   } satisfies PolyEdge);
 }
 
+/** Deleted event ids ordered oldest to newest. */
+function tombstoneEventIds(nodes: PolyNode[]): string[] {
+  return nodes
+    .sort((a, b) => a.updatedAt - b.updatedAt)
+    .map(tombstoneEventId)
+    .filter((eventId): eventId is string => eventId !== null);
+}
+
+/** Deleted event ids (oldest to newest) without loading any listing nodes. */
+export async function loadBrowseDeletedEventIds(): Promise<string[]> {
+  const instance = await getGraph();
+  return tombstoneEventIds(await instance.queryPersisted().whereNodeType(TOMBSTONE_NODE_TYPE).toArray());
+}
+
 export async function loadBrowseCacheStore(): Promise<{ items: BrowseItem[]; deletedEventIds: string[] }> {
   const instance = await getGraph();
   const [listingNodes, tombstoneNodes] = await Promise.all([
     instance.queryPersisted().whereNodeType(LISTING_NODE_TYPE).toArray(),
     instance.queryPersisted().whereNodeType(TOMBSTONE_NODE_TYPE).toArray()
   ]);
-  const deletedEventIds = tombstoneNodes
-    .map(tombstoneEventId)
-    .filter((eventId): eventId is string => eventId !== null);
+  const deletedEventIds = tombstoneEventIds(tombstoneNodes);
   const deleted = new Set(deletedEventIds);
   const items = listingNodes
     .map(itemFromNode)
@@ -354,13 +369,40 @@ export async function loadLegacyBrowseCacheStore(): Promise<{ items: BrowseItem[
   });
 }
 
+/**
+ * True when the stored node already holds this event (or a newer one) with a
+ * vector. The vector may come from another provider: re-embedding on every
+ * relay resend would flip vectors between providers, so version upgrades are
+ * left to reindexBrowseEmbeddings().
+ */
+function isStoredListingCurrent(node: PolyNode | undefined, item: BrowseItem): boolean {
+  if (!node || node.type !== LISTING_NODE_TYPE) return false;
+  const data = node.data as Partial<ListingNodeData>;
+  if ((data.created_at ?? 0) > item.created_at) return true;
+  return data.eventId === item.eventId && (node.vector?.length ?? 0) > 0;
+}
+
 export async function upsertBrowseItems(items: BrowseItem[]): Promise<void> {
   if (items.length === 0) return;
   await enqueueWrite(async () => {
     const instance = await getGraph();
-    const embeddings = await Promise.all(items.map(async (item) => [item, await listingEmbeddingMetadata(item)] as const));
-    const edgeIds = new Map<string, string[]>();
+    // Relays resend the same events constantly; only re-embed and rewrite
+    // listings whose event actually changed.
+    const newest = new Map<string, BrowseItem>();
     for (const item of items) {
+      const id = listingNodeId(item);
+      const current = newest.get(id);
+      if (!current || item.created_at > current.created_at) newest.set(id, item);
+    }
+    const changed: BrowseItem[] = [];
+    for (const [id, item] of newest) {
+      if (!isStoredListingCurrent(await instance.getNodeSafe(id), item)) changed.push(item);
+    }
+    if (changed.length === 0) return;
+
+    const embeddings = await Promise.all(changed.map(async (item) => [item, await listingEmbeddingMetadata(item)] as const));
+    const edgeIds = new Map<string, string[]>();
+    for (const item of changed) {
       const id = listingNodeId(item);
       await instance.getNodeSafe(id);
       edgeIds.set(id, instance.getEdges(id).map((edge) => edgeId(id, edge.type, edge.target)));
@@ -389,6 +431,8 @@ export async function upsertBrowseItems(items: BrowseItem[]): Promise<void> {
         addListingRelations(tx, item);
       }
     });
+    // A replaced listing may have dropped its last link to a category or geohash.
+    if (Array.from(edgeIds.values()).some((ids) => ids.length > 0)) sharedNodesMayBeOrphaned = true;
     await instance.flush();
   });
 }
@@ -398,16 +442,21 @@ export async function recordBrowseDeletions(eventIds: string[]): Promise<void> {
   if (ids.length === 0) return;
   await enqueueWrite(async () => {
     const instance = await getGraph();
-    const listingNodes = await instance.queryPersisted().whereNodeType(LISTING_NODE_TYPE).toArray();
-    const removedIds = new Set(
-      listingNodes
-        .filter((node) => ids.includes((node.data as Partial<ListingNodeData>).eventId ?? ''))
-        .map((node) => node.id)
-    );
+    const removedIds = new Set<string>();
+    for (const eventId of ids) {
+      // Served by the listing-event-id index instead of scanning every listing.
+      const matches = await instance.queryPersisted().whereNodeType(LISTING_NODE_TYPE).where('eventId', eventId).ids();
+      for (const id of matches) removedIds.add(id);
+    }
+    const newTombstones: string[] = [];
+    for (const eventId of ids) {
+      if (!(await instance.getNodeSafe(`deleted-event:${eventId}`))) newTombstones.push(eventId);
+    }
+    if (removedIds.size === 0 && newTombstones.length === 0) return;
     for (const id of removedIds) await instance.getNodeSafe(id);
     await instance.transaction((tx) => {
       for (const id of removedIds) tx.removeNode(id);
-      for (const eventId of ids) {
+      for (const eventId of newTombstones) {
         tx.addNode({
           id: `deleted-event:${eventId}`,
           type: TOMBSTONE_NODE_TYPE,
@@ -417,6 +466,7 @@ export async function recordBrowseDeletions(eventIds: string[]): Promise<void> {
         });
       }
     });
+    if (removedIds.size > 0) sharedNodesMayBeOrphaned = true;
     await instance.flush();
   });
 }
@@ -464,17 +514,31 @@ function normalizedTokens(value: string): string[] {
   return value.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 }
 
-function keywordScore(item: BrowseItem, keyword: string): number {
-  const tokens = Array.from(new Set(normalizedTokens(keyword)));
+// Persisted queries return fresh node copies, so cache by event id (an
+// event's content never changes) rather than by object identity.
+const searchableTextCache = new Map<string, string>();
+const MAX_SEARCHABLE_TEXT_CACHE = 2000;
+
+function searchableTextFor(item: BrowseItem): string {
+  let text = searchableTextCache.get(item.eventId);
+  if (text === undefined) {
+    text = [
+      item.listing.title,
+      item.listing.summary,
+      item.listing.content,
+      item.listing.location ?? '',
+      ...item.listing.categories,
+      ...(item.listing.subcategories ?? []).flatMap((entry) => [entry.parent, entry.value])
+    ].join(' ').toLowerCase();
+    if (searchableTextCache.size >= MAX_SEARCHABLE_TEXT_CACHE) searchableTextCache.clear();
+    searchableTextCache.set(item.eventId, text);
+  }
+  return text;
+}
+
+function keywordScore(item: BrowseItem, tokens: string[]): number {
   if (tokens.length === 0) return 0;
-  const searchableText = [
-    item.listing.title,
-    item.listing.summary,
-    item.listing.content,
-    item.listing.location ?? '',
-    ...item.listing.categories,
-    ...(item.listing.subcategories ?? []).flatMap((entry) => [entry.parent, entry.value])
-  ].join(' ').toLowerCase();
+  const searchableText = searchableTextFor(item);
   return tokens.filter((token) => searchableText.includes(token)).length / tokens.length;
 }
 
@@ -525,12 +589,33 @@ function distanceScoreFor(item: BrowseItem, geohashPrefix?: string): { distanceK
   return { distanceKm: kilometres, score: Math.exp(-kilometres / 50) };
 }
 
-async function getCachedSellerReputation(sellerPubkey: string): Promise<SellerReputation> {
-  const cached = reputationCache.get(sellerPubkey);
-  if (cached && cached.expiresAt > Date.now()) return cached.reputation;
-  const reputation = await getSellerReputation(sellerPubkey);
-  reputationCache.set(sellerPubkey, { reputation, expiresAt: Date.now() + REPUTATION_CACHE_TTL_MS });
-  return reputation;
+/** Reputations for many sellers from at most one pass over stored reviews. */
+async function getCachedSellerReputations(sellerPubkeys: Iterable<string>): Promise<Map<string, SellerReputation>> {
+  const now = Date.now();
+  const result = new Map<string, SellerReputation>();
+  const missing = new Set<string>();
+  for (const sellerPubkey of sellerPubkeys) {
+    const cached = reputationCache.get(sellerPubkey);
+    if (cached && cached.expiresAt > now) result.set(sellerPubkey, cached.reputation);
+    else missing.add(sellerPubkey);
+  }
+  if (missing.size === 0) return result;
+
+  const instance = await getGraph();
+  const reviewsBySeller = new Map<string, SellerReview[]>();
+  for (const node of await instance.queryPersisted().whereNodeType(REVIEW_NODE_TYPE).toArray()) {
+    const review = reviewFromNode(node);
+    if (!review || !missing.has(review.sellerPubkey)) continue;
+    const reviews = reviewsBySeller.get(review.sellerPubkey);
+    if (reviews) reviews.push(review);
+    else reviewsBySeller.set(review.sellerPubkey, [review]);
+  }
+  for (const sellerPubkey of missing) {
+    const reputation = reputationFromReviews(reviewsBySeller.get(sellerPubkey) ?? []);
+    reputationCache.set(sellerPubkey, { reputation, expiresAt: now + REPUTATION_CACHE_TTL_MS });
+    result.set(sellerPubkey, reputation);
+  }
+  return result;
 }
 
 /** Retrieve and rank listings using graph filters, lexical matching, and stored vectors. */
@@ -551,24 +636,32 @@ export async function queryHybridBrowseItems(
     ? new Float64Array(await listingEmbedding.embed(buildEmbeddingText({ query: keyword })))
     : null;
   const hasGraphConstraint = targets.size > 0;
-  const ranked: HybridBrowseItem[] = [];
-
+  const location = filters.location?.toLowerCase();
+  const candidates: Array<{ node: PolyNode; item: BrowseItem }> = [];
   for (const node of nodes) {
     const item = itemFromNode(node);
     if (!item || item.listing.status !== 'active') continue;
     if (filters.since !== undefined && item.created_at < filters.since) continue;
-    if (filters.location && !(item.listing.location ?? '').toLowerCase().includes(filters.location.toLowerCase())) continue;
+    if (location && !(item.listing.location ?? '').toLowerCase().includes(location)) continue;
+    candidates.push({ node, item });
+  }
+  const reputations = await getCachedSellerReputations(candidates.map(({ item }) => item.pubkey));
+  const keywordTokens = Array.from(new Set(normalizedTokens(keyword)));
+  const ranked: HybridBrowseItem[] = [];
 
-    const keywordMatch = keywordScore(item, keyword);
-    const semanticMatch = queryVector && node.vector
+  for (const { node, item } of candidates) {
+    const keywordMatch = keywordScore(item, keywordTokens);
+    // Vectors from different providers aren't comparable, even at equal dimensions.
+    const comparableVector = (node.data as Partial<ListingNodeData>).embeddingVersion === listingEmbedding.version;
+    const semanticMatch = queryVector && comparableVector && node.vector
       ? Math.max(0, cosineSimilarity(queryVector, node.vector))
       : 0;
     const graphMatch = hasGraphConstraint ? graphOverlapScore(item, filters, categoryScope) : 0;
     const distance = distanceScoreFor(item, filters.geohashPrefix);
     const fresh = freshnessScore(item.created_at);
     const quality = listingQualityScore(item);
-    const reputation = await getCachedSellerReputation(item.pubkey);
-    const reputationMatch = reputation.count > 0 ? reputation.averageRating / 5 : 0.5;
+    const reputation = reputations.get(item.pubkey);
+    const reputationMatch = reputation && reputation.count > 0 ? reputation.averageRating / 5 : 0.5;
 
     const weights = [
       keyword ? [keywordMatch, 0.3] : [0, 0],
@@ -666,8 +759,7 @@ export async function queryBrowseReviewsBySeller(sellerPubkey: string): Promise<
   return nodes.map(reviewFromNode).filter((review): review is SellerReview => review !== null);
 }
 
-export async function getSellerReputation(sellerPubkey: string): Promise<SellerReputation> {
-  const reviews = await queryBrowseReviewsBySeller(sellerPubkey);
+function reputationFromReviews(reviews: SellerReview[]): SellerReputation {
   const distribution: SellerReputation['distribution'] = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
   for (const review of reviews) distribution[review.rating as 1 | 2 | 3 | 4 | 5] += 1;
   return {
@@ -679,49 +771,65 @@ export async function getSellerReputation(sellerPubkey: string): Promise<SellerR
   };
 }
 
+export async function getSellerReputation(sellerPubkey: string): Promise<SellerReputation> {
+  return reputationFromReviews(await queryBrowseReviewsBySeller(sellerPubkey));
+}
+
 /** Keep durable graph storage bounded and remove shared nodes no longer in use. */
 export async function pruneBrowseCacheStore(maxItems = 200, maxDeletions = 500): Promise<void> {
   await enqueueWrite(async () => {
     const instance = await getGraph();
-    const listingNodes = await instance.queryPersisted().whereNodeType(LISTING_NODE_TYPE).toArray();
-    const tombstoneNodes = await instance.queryPersisted().whereNodeType(TOMBSTONE_NODE_TYPE).toArray();
-    const keepListings = new Set(
-      listingNodes
-        .sort((a, b) => ((b.data as Partial<ListingNodeData>).created_at ?? 0) - ((a.data as Partial<ListingNodeData>).created_at ?? 0))
-        .slice(0, Math.max(0, maxItems))
-        .map((node) => node.id)
-    );
-    const keepTombstones = new Set(
-      tombstoneNodes
-        .sort((a, b) => b.updatedAt - a.updatedAt)
-        .slice(0, Math.max(0, maxDeletions))
-        .map((node) => node.id)
-    );
-    const removeIds = [
-      ...listingNodes.filter((node) => !keepListings.has(node.id)).map((node) => node.id),
-      ...tombstoneNodes.filter((node) => !keepTombstones.has(node.id)).map((node) => node.id)
-    ];
+    // Type-only counts come straight from the adapter's type index, so the
+    // common under-cap case costs nothing.
+    const [listingCount, tombstoneCount] = await Promise.all([
+      instance.queryPersisted().whereNodeType(LISTING_NODE_TYPE).count(),
+      instance.queryPersisted().whereNodeType(TOMBSTONE_NODE_TYPE).count()
+    ]);
+    const removeIds: string[] = [];
+    if (listingCount > maxItems) {
+      const listingNodes = await instance.queryPersisted().whereNodeType(LISTING_NODE_TYPE).toArray();
+      removeIds.push(
+        ...listingNodes
+          .sort((a, b) => ((b.data as Partial<ListingNodeData>).created_at ?? 0) - ((a.data as Partial<ListingNodeData>).created_at ?? 0))
+          .slice(Math.max(0, maxItems))
+          .map((node) => node.id)
+      );
+    }
+    if (tombstoneCount > maxDeletions) {
+      const tombstoneNodes = await instance.queryPersisted().whereNodeType(TOMBSTONE_NODE_TYPE).toArray();
+      removeIds.push(
+        ...tombstoneNodes
+          .sort((a, b) => b.updatedAt - a.updatedAt)
+          .slice(Math.max(0, maxDeletions))
+          .map((node) => node.id)
+      );
+    }
     if (removeIds.length > 0) {
       for (const id of removeIds) await instance.getNodeSafe(id);
       await instance.transaction((tx) => {
         for (const id of removeIds) tx.removeNode(id);
       });
-      await instance.flush();
+      sharedNodesMayBeOrphaned = true;
     }
 
-    const sharedNodes = (await Promise.all(
-      Array.from(SHARED_NODE_TYPES, (type) => instance.queryPersisted().whereNodeType(type).toArray())
-    )).flat();
-    const orphanIds = sharedNodes
-      .filter((node) => RELATION_EDGE_TYPES.every((type) => instance.getEdgeSources(node.id, type).length === 0))
-      .map((node) => node.id);
-    if (orphanIds.length > 0) {
-      for (const id of orphanIds) await instance.getNodeSafe(id);
-      await instance.transaction((tx) => {
-        for (const id of orphanIds) tx.removeNode(id);
-      });
-      await instance.flush();
+    let removedOrphans = false;
+    if (sharedNodesMayBeOrphaned) {
+      sharedNodesMayBeOrphaned = false;
+      const sharedNodes = (await Promise.all(
+        Array.from(SHARED_NODE_TYPES, (type) => instance.queryPersisted().whereNodeType(type).toArray())
+      )).flat();
+      const orphanIds = sharedNodes
+        .filter((node) => RELATION_EDGE_TYPES.every((type) => instance.getEdgeSources(node.id, type).length === 0))
+        .map((node) => node.id);
+      if (orphanIds.length > 0) {
+        for (const id of orphanIds) await instance.getNodeSafe(id);
+        await instance.transaction((tx) => {
+          for (const id of orphanIds) tx.removeNode(id);
+        });
+        removedOrphans = true;
+      }
     }
+    if (removeIds.length > 0 || removedOrphans) await instance.flush();
   });
 }
 
@@ -773,4 +881,7 @@ export function resetBrowseCacheStoreForTests(): void {
   graph = null;
   graphPromise = null;
   writeTail = Promise.resolve();
+  sharedNodesMayBeOrphaned = false;
+  reputationCache.clear();
+  searchableTextCache.clear();
 }

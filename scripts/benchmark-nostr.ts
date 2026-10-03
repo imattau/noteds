@@ -10,7 +10,7 @@ import {
 import { evaluateRanking } from '../src/lib/nostr/rankingEvaluation.ts';
 import type { BrowseItem } from '../src/lib/nostr/browseCounts.ts';
 
-const DEFAULT_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band'];
+const DEFAULT_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.primal.net', 'wss://offchain.pub'];
 const DEFAULT_LIMIT = 250;
 const DEFAULT_RUNS = 5;
 const BROWSER_MODEL = 'onnx-community/all-MiniLM-L6-v2-ONNX';

@@ -220,7 +220,7 @@
         kind: 5,
         created_at: Math.floor(Date.now() / 1000),
         content: 'deleted from my listings',
-        tags: [['e', item.eventId], ['k', '30402']]
+        tags: [['e', item.eventId], ['a', `30402:${pubkey}:${item.listing.id}`], ['k', '30402']]
       });
       await relayPool.publish(getActiveRelays(), deleteEvent);
       await removeOwnedListingId(pubkey, item.listing.id);

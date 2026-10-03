@@ -16,11 +16,28 @@
   let passkeyLoading = $state(false);
   let signerAppLoading = $state(false);
 
+  /**
+   * Warm the semantic search model once the browser is idle, so it is ready
+   * for the first search without competing with first paint and relay fetches.
+   * A keyword search before then loads it on demand; either way it loads once.
+   */
+  function scheduleSemanticSearchWarmup(): () => void {
+    const warm = () => {
+      void import('$lib/nostr/browserEmbedding').then(({ ensureBrowserSemanticSearch }) =>
+        ensureBrowserSemanticSearch()
+      );
+    };
+    if (typeof requestIdleCallback === 'function') {
+      const handle = requestIdleCallback(warm, { timeout: 3000 });
+      return () => cancelIdleCallback(handle);
+    }
+    const handle = setTimeout(warm, 1500);
+    return () => clearTimeout(handle);
+  }
+
   onMount(() => {
     let disposed = false;
-    void import('$lib/nostr/browserEmbedding').then(({ enableBrowserSemanticSearch }) => {
-      if (!disposed) void enableBrowserSemanticSearch();
-    });
+    const cancelSemanticWarmup = scheduleSemanticSearchWarmup();
     void import('$lib/nostr/signer').then(({ account: accountStore }) => {
       if (disposed) {
         return;
@@ -39,6 +56,8 @@
         });
       }
       return () => {
+        disposed = true;
+        cancelSemanticWarmup();
         accountUnsubscribe?.();
       };
     }
@@ -49,6 +68,7 @@
 
     return () => {
       disposed = true;
+      cancelSemanticWarmup();
       accountUnsubscribe?.();
     };
   });

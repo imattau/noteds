@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BrowseItem } from './browseCounts';
 import type { SellerReview } from './reviews';
 import {
   getBrowseItemFromStore,
   loadBrowseCacheStore,
+  loadBrowseDeletedEventIds,
   queryBrowseItemsBySeller,
   queryBrowseReviewsBySeller,
   getSellerReputation,
@@ -14,8 +15,10 @@ import {
   queryBrowseCacheKeys,
   recordBrowseDeletions,
   resetBrowseCacheStoreForTests,
+  setBrowseEmbeddingProvider,
   upsertBrowseItems
 } from './browseCacheStore';
+import { FeatureHashEmbedding } from '@0xx0lostcause0xx0/polypack';
 
 const item: BrowseItem = {
   pubkey: 'pubkey-1',
@@ -173,5 +176,84 @@ describe('Polypack browse store', () => {
 
     expect(await getBrowseItemFromStore(item.pubkey, item.listing.id)).toBeNull();
     expect(await loadBrowseCacheStore()).toMatchObject({ items: [], deletedEventIds: ['event-1'] });
+  });
+
+  it('skips re-embedding listings whose event is already stored', async () => {
+    const baseline = new FeatureHashEmbedding({ dimensions: 384 });
+    const embed = vi.fn((text: string) => baseline.embed(text));
+    setBrowseEmbeddingProvider({ version: 'feature-hash-384-v1', dimensions: 384, embed });
+
+    await upsertBrowseItems([item]);
+    await upsertBrowseItems([item]);
+    expect(embed).toHaveBeenCalledTimes(1);
+
+    await upsertBrowseItems([{ ...item, created_at: item.created_at - 10, eventId: 'older-event' }]);
+    expect(embed).toHaveBeenCalledTimes(1);
+    expect((await getBrowseItemFromStore(item.pubkey, item.listing.id))?.eventId).toBe('event-1');
+
+    const updated = { ...item, created_at: item.created_at + 10, eventId: 'newer-event' };
+    await upsertBrowseItems([updated]);
+    expect(embed).toHaveBeenCalledTimes(2);
+    expect((await getBrowseItemFromStore(item.pubkey, item.listing.id))?.eventId).toBe('newer-event');
+  });
+
+  it('removes only the listing matching a deleted event id', async () => {
+    await upsertBrowseItems([
+      item,
+      { ...item, eventId: 'event-2', listing: { ...item.listing, id: 'listing-2' } }
+    ]);
+    await recordBrowseDeletions(['event-2', 'unknown-event']);
+
+    expect((await loadBrowseCacheStore()).items.map((entry) => entry.listing.id)).toEqual(['listing-1']);
+    expect((await loadBrowseCacheStore()).deletedEventIds.sort()).toEqual(['event-2', 'unknown-event']);
+  });
+
+  it('sweeps shared nodes orphaned by pruning', async () => {
+    await upsertBrowseItems([
+      { ...item, created_at: 100, eventId: 'old-event', listing: { ...item.listing, id: 'old-listing', categories: ['Services'] } },
+      { ...item, created_at: 300, eventId: 'new-event', listing: { ...item.listing, id: 'new-listing' } }
+    ]);
+    await pruneBrowseCacheStore(1, 500);
+
+    expect(await queryBrowseCacheKeys({ categories: ['Services'] })).toEqual([]);
+    expect(await queryBrowseCacheKeys({ categories: ['For Sale'] })).toEqual(['pubkey-1:new-listing']);
+  });
+
+  it('ranks with reputations for many sellers', async () => {
+    await upsertBrowseItems([
+      item,
+      { ...item, pubkey: 'pubkey-2', eventId: 'event-2', listing: { ...item.listing, id: 'listing-2' } }
+    ]);
+    await cacheBrowseReviews([
+      { ...review, rating: 1 },
+      { ...review, id: 'review-2', sellerPubkey: 'pubkey-2', rating: 5, eventId: 'review-event-2' }
+    ]);
+
+    const results = await queryHybridBrowseItems({});
+    expect(Object.fromEntries(results.map((entry) => [entry.pubkey, entry.reputationScore]))).toEqual({
+      'pubkey-1': 0.2,
+      'pubkey-2': 1
+    });
+  });
+
+  it('loads deletion tombstones oldest first', async () => {
+    await recordBrowseDeletions(['event-a']);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    await recordBrowseDeletions(['event-b']);
+
+    expect(await loadBrowseDeletedEventIds()).toEqual(['event-a', 'event-b']);
+  });
+
+  it('ignores stored vectors from a different embedding provider', async () => {
+    await upsertBrowseItems([item]);
+    const baseline = new FeatureHashEmbedding({ dimensions: 384 });
+    setBrowseEmbeddingProvider({ version: 'other-model', dimensions: 384, embed: (text) => baseline.embed(text) });
+    try {
+      const [result] = await queryHybridBrowseItems({ keyword: 'road bike' });
+      expect(result.semanticScore).toBe(0);
+      expect(result.keywordScore).toBe(1);
+    } finally {
+      setBrowseEmbeddingProvider({ version: 'feature-hash-384-v1', dimensions: 384, embed: (text) => baseline.embed(text) });
+    }
   });
 });

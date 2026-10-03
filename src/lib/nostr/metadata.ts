@@ -1,6 +1,6 @@
 import { nip19 } from 'nostr-tools';
 import type { NostrEvent } from 'nostr-tools';
-import { getActiveRelays } from './relays';
+import { getProfileRelays } from './relays';
 import { collectEvents } from './requestEvents';
 import { eventStore, relayPool } from './runtime';
 
@@ -66,7 +66,7 @@ function parseProfileEvent(event: NostrEvent): NostrUser['metadata'] {
 async function fetchProfileMetadata(pubkey: string): Promise<NostrUser['metadata']> {
   if (typeof window === 'undefined') return null;
 
-  const relays = getActiveRelays();
+  const relays = getProfileRelays();
   if (relays.length === 0) return null;
 
   const events = await collectEvents(

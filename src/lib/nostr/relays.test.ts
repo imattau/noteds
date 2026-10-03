@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_RELAYS, getActiveRelays, getCustomRelays, setCustomRelays } from './relays';
+import {
+  DEFAULT_RELAYS,
+  PROFILE_INDEX_RELAYS,
+  getActiveRelays,
+  getCustomRelays,
+  getProfileRelays,
+  setCustomRelays
+} from './relays';
 
 describe('DEFAULT_RELAYS', () => {
   it('has at least 4 entries, all ws/wss', () => {
@@ -58,5 +65,22 @@ describe('getActiveRelays', () => {
 
   it('returns just the defaults when no custom relays are set', () => {
     expect(getActiveRelays()).toEqual(DEFAULT_RELAYS);
+  });
+});
+
+describe('getProfileRelays', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('adds profile indexers to the active relays without duplicating them', () => {
+    setCustomRelays([PROFILE_INDEX_RELAYS[0], 'wss://extra.example']);
+    const relays = getProfileRelays();
+    for (const url of [...getActiveRelays(), ...PROFILE_INDEX_RELAYS]) expect(relays).toContain(url);
+    expect(new Set(relays).size).toBe(relays.length);
+  });
+
+  it('keeps profile-only indexers out of the general relay set', () => {
+    for (const url of PROFILE_INDEX_RELAYS) expect(DEFAULT_RELAYS).not.toContain(url);
   });
 });
