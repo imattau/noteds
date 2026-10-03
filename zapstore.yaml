@@ -10,8 +10,10 @@ license: ""
 website: https://github.com/imattau/noteds
 icon: src-tauri/icons/icon.png
 release_source: https://github.com/imattau/noteds
-# zsp publishes the CHANGELOG.md section matching the APK's version name.
-release_notes: ./CHANGELOG.md
+# Release notes: deliberately no release_notes here. zsp v0.5.x publishes a
+# release_notes file whole rather than the matching CHANGELOG.md section, so
+# the Android workflow writes that section into the GitHub Release body and
+# zsp falls back to the body (release_source above).
 metadata_sources: []
 # zsp metadata guidance
 # Add any of these optional fields when they are available:
