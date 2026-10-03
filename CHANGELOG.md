@@ -4,6 +4,13 @@ All notable changes to Noteds are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and each version's
 section is used as its release notes on GitHub and Zapstore.
 
+## [0.1.8] - 2026-10-03
+
+### Fixed
+- Publishing a listing from the Android app no longer fails with "can't
+  serialize event with wrong or missing properties". The price is now always
+  sent as text.
+
 ## [0.1.7] - 2026-10-03
 
 ### Fixed
