@@ -4,7 +4,7 @@ import {
   cacheBrowseItems,
   loadBrowseCacheSnapshot,
   mergeBrowseCaches,
-  normalizeDeletedEventIds,
+  normalizeDeletionKeys,
   primeBrowseCacheMemory,
   queryBrowseCache
 } from '$lib/nostr/browseCache';
@@ -15,7 +15,7 @@ import {
   subscribeToListingDeletions,
   subscribeToListings
 } from '$lib/nostr/feed';
-import { getDeletedAddresses, getDeletedEventIds } from '$lib/nostr/deletions';
+import { deletionKey, getDeletedAddresses, getDeletedEventIds, getDeletionKeys } from '$lib/nostr/deletions';
 import { parseListingEvent, type ListingInput } from '$lib/nostr/listings';
 import { getActiveRelays } from '$lib/nostr/relays';
 import type { ListingFilters } from '$lib/nostr/searchParams';
@@ -30,6 +30,10 @@ interface FeedItem {
 /** Upper bound on listings held in memory; the newest are kept. */
 const MAX_FEED_ITEMS = 1000;
 
+function itemDeletionKey(item: FeedItem): string {
+  return deletionKey(item.pubkey, item.eventId);
+}
+
 function listingAddress(item: FeedItem): string {
   return `30402:${item.pubkey}:${item.listing.id}`;
 }
@@ -41,7 +45,8 @@ export function useBrowseFeed(options: {
   categoryScope?: () => string | undefined;
 }) {
   let items = $state<FeedItem[]>([]);
-  let deletedEventIds = $state<string[]>([]);
+  /** deletionKey() values: a deletion only hides listings by its own author. */
+  let deletionKeys = $state<string[]>([]);
   let browseCacheUpdatedAt = 0;
   // Each older page raises the cap by what it added, so paged-in listings
   // aren't trimmed straight back out.
@@ -63,8 +68,8 @@ export function useBrowseFeed(options: {
       if (items.length === 0) {
         items = browseCache.items;
       }
-      if (deletedEventIds.length === 0) {
-        deletedEventIds = browseCache.deletedEventIds;
+      if (deletionKeys.length === 0) {
+        deletionKeys = browseCache.deletionKeys;
       }
     });
     browseCacheUpdatedAt = browseCache.updatedAt;
@@ -80,13 +85,13 @@ export function useBrowseFeed(options: {
     const batch = pendingItems;
     pendingItems = [];
 
-    const deleted = new Set(deletedEventIds);
+    const deleted = new Set(deletionKeys);
     const map = new Map<string, FeedItem>();
     for (const item of items) {
       map.set(`${item.listing.id}:${item.pubkey}`, item);
     }
     for (const item of batch) {
-      if (deleted.has(item.eventId)) continue;
+      if (deleted.has(itemDeletionKey(item))) continue;
       const key = `${item.listing.id}:${item.pubkey}`;
       const existing = map.get(key);
       if (!existing || item.created_at > existing.created_at) {
@@ -110,19 +115,20 @@ export function useBrowseFeed(options: {
 
   function flushPendingDeletions() {
     deletionFlushTimer = null;
-    const known = new Set(deletedEventIds);
-    const fresh = Array.from(pendingDeletions).filter((eventId) => !known.has(eventId));
+    const known = new Set(deletionKeys);
+    const fresh = Array.from(pendingDeletions).filter((key) => !known.has(key));
     pendingDeletions = new Set();
     if (fresh.length === 0) return;
 
     const freshSet = new Set(fresh);
-    deletedEventIds = normalizeDeletedEventIds([...deletedEventIds, ...fresh]);
-    items = items.filter((item) => !freshSet.has(item.eventId));
+    deletionKeys = normalizeDeletionKeys([...deletionKeys, ...fresh]);
+    items = items.filter((item) => !freshSet.has(itemDeletionKey(item)));
     void cacheBrowseDeletions(fresh);
   }
 
-  function addDeletions(eventIds: string[]) {
-    for (const eventId of eventIds) pendingDeletions.add(eventId);
+  /** Queue deletions by deletionKey(). */
+  function addDeletions(keys: string[]) {
+    for (const key of keys) pendingDeletions.add(key);
     if (!deletionFlushTimer) {
       deletionFlushTimer = setTimeout(flushPendingDeletions, FEED_FLUSH_DELAY_MS);
     }
@@ -159,7 +165,7 @@ export function useBrowseFeed(options: {
     const categoryScope = options.categoryScope?.();
     const current = untrack(() => ({
       items,
-      deletedEventIds,
+      deletionKeys,
       updatedAt: browseCacheUpdatedAt
     }));
 
@@ -177,7 +183,7 @@ export function useBrowseFeed(options: {
       if (token !== browseQueryToken) return;
       const merged = mergeBrowseCaches(current, cache);
       items = newestFirst(merged.items);
-      deletedEventIds = merged.deletedEventIds;
+      deletionKeys = merged.deletionKeys;
       primeBrowseCacheMemory(merged);
     });
 
@@ -221,8 +227,8 @@ export function useBrowseFeed(options: {
     const deletionSince =
       since ?? Math.floor(Date.now() / 1000) - DEFAULT_LISTING_BACKFILL_DAYS * 24 * 60 * 60;
     return subscribeToListingDeletions(getActiveRelays(), deletionSince, (event) => {
-      const deleted = getDeletedEventIds(event);
-      if (deleted.length > 0) addDeletions(deleted);
+      const keys = getDeletionKeys(event);
+      if (keys.length > 0) addDeletions(keys);
     });
   });
 
@@ -255,7 +261,7 @@ export function useBrowseFeed(options: {
       }
 
       const known = new Set(items.map((item) => `${item.listing.id}:${item.pubkey}`));
-      const deleted = new Set(deletedEventIds);
+      const deleted = new Set(deletionKeys);
       const page = new Map<string, FeedItem>();
       for (const event of events) {
         const item: FeedItem = {
@@ -265,7 +271,7 @@ export function useBrowseFeed(options: {
           eventId: event.id
         };
         const key = `${item.listing.id}:${item.pubkey}`;
-        if (known.has(key) || deleted.has(item.eventId)) continue;
+        if (known.has(key) || deleted.has(itemDeletionKey(item))) continue;
         const existing = page.get(key);
         if (!existing || item.created_at > existing.created_at) page.set(key, item);
       }
@@ -291,11 +297,11 @@ export function useBrowseFeed(options: {
           // versions published up to the deletion.
           if (deletion.pubkey !== item.pubkey) continue;
           if (ids.has(item.eventId) || (addresses.has(listingAddress(item)) && item.created_at <= deletion.created_at)) {
-            removed.add(item.eventId);
+            removed.add(itemDeletionKey(item));
           }
         }
       }
-      const added = pageItems.filter((item) => !removed.has(item.eventId));
+      const added = pageItems.filter((item) => !removed.has(itemDeletionKey(item)));
       if (removed.size > 0) addDeletions(Array.from(removed));
       if (added.length === 0) return 0;
 
@@ -309,7 +315,7 @@ export function useBrowseFeed(options: {
 
   return {
     get items() { return items; },
-    get deletedEventIds() { return deletedEventIds; },
+    get deletionKeys() { return deletionKeys; },
     get loadingOlder() { return loadingOlder; },
     get reachedOldest() { return reachedOldest; },
     loadOlder

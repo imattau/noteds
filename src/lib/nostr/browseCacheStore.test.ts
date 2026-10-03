@@ -4,7 +4,7 @@ import type { SellerReview } from './reviews';
 import {
   getBrowseItemFromStore,
   loadBrowseCacheStore,
-  loadBrowseDeletedEventIds,
+  loadBrowseDeletionKeys,
   queryBrowseItemsBySeller,
   queryBrowseReviewsBySeller,
   getSellerReputation,
@@ -56,7 +56,7 @@ describe('Polypack browse store', () => {
   it('persists listing nodes and shared relation nodes', async () => {
     await upsertBrowseItems([item]);
 
-    expect(await loadBrowseCacheStore()).toMatchObject({ items: [item], deletedEventIds: [] });
+    expect(await loadBrowseCacheStore()).toMatchObject({ items: [item], deletionKeys: [] });
     expect(await queryBrowseCacheKeys({ categories: ['For Sale'] })).toEqual(['pubkey-1:listing-1']);
     expect(await queryBrowseCacheKeys({ subcategories: ['For Sale::Sports & Outdoors'] })).toEqual([
       'pubkey-1:listing-1'
@@ -165,17 +165,25 @@ describe('Polypack browse store', () => {
 
   it('keeps deletion tombstones after removing the listing', async () => {
     await upsertBrowseItems([item]);
-    await recordBrowseDeletions(['event-1']);
+    await recordBrowseDeletions(['pubkey-1:event-1']);
 
     expect(await getBrowseItemFromStore(item.pubkey, item.listing.id)).toBeNull();
-    expect(await loadBrowseCacheStore()).toMatchObject({ items: [], deletedEventIds: ['event-1'] });
+    expect(await loadBrowseCacheStore()).toMatchObject({ items: [], deletionKeys: ['pubkey-1:event-1'] });
   });
 
   it('serializes concurrent listing and deletion writes', async () => {
-    await Promise.all([upsertBrowseItems([item]), recordBrowseDeletions(['event-1'])]);
+    await Promise.all([upsertBrowseItems([item]), recordBrowseDeletions(['pubkey-1:event-1'])]);
 
     expect(await getBrowseItemFromStore(item.pubkey, item.listing.id)).toBeNull();
-    expect(await loadBrowseCacheStore()).toMatchObject({ items: [], deletedEventIds: ['event-1'] });
+    expect(await loadBrowseCacheStore()).toMatchObject({ items: [], deletionKeys: ['pubkey-1:event-1'] });
+  });
+
+  it('ignores deletions issued by someone other than the listing author', async () => {
+    await upsertBrowseItems([item]);
+    await recordBrowseDeletions(['attacker:event-1', 'event-1']);
+
+    expect(await getBrowseItemFromStore(item.pubkey, item.listing.id)).toMatchObject({ eventId: 'event-1' });
+    expect(await loadBrowseCacheStore()).toMatchObject({ items: [item], deletionKeys: ['attacker:event-1'] });
   });
 
   it('skips re-embedding listings whose event is already stored', async () => {
@@ -202,10 +210,10 @@ describe('Polypack browse store', () => {
       item,
       { ...item, eventId: 'event-2', listing: { ...item.listing, id: 'listing-2' } }
     ]);
-    await recordBrowseDeletions(['event-2', 'unknown-event']);
+    await recordBrowseDeletions(['pubkey-1:event-2', 'pubkey-1:unknown-event']);
 
     expect((await loadBrowseCacheStore()).items.map((entry) => entry.listing.id)).toEqual(['listing-1']);
-    expect((await loadBrowseCacheStore()).deletedEventIds.sort()).toEqual(['event-2', 'unknown-event']);
+    expect((await loadBrowseCacheStore()).deletionKeys.sort()).toEqual(['pubkey-1:event-2', 'pubkey-1:unknown-event']);
   });
 
   it('sweeps shared nodes orphaned by pruning', async () => {
@@ -237,11 +245,11 @@ describe('Polypack browse store', () => {
   });
 
   it('loads deletion tombstones oldest first', async () => {
-    await recordBrowseDeletions(['event-a']);
+    await recordBrowseDeletions(['author:event-a']);
     await new Promise((resolve) => setTimeout(resolve, 2));
-    await recordBrowseDeletions(['event-b']);
+    await recordBrowseDeletions(['author:event-b']);
 
-    expect(await loadBrowseDeletedEventIds()).toEqual(['event-a', 'event-b']);
+    expect(await loadBrowseDeletionKeys()).toEqual(['author:event-a', 'author:event-b']);
   });
 
   it('ignores stored vectors from a different embedding provider', async () => {

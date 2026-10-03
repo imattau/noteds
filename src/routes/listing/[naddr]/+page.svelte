@@ -24,8 +24,14 @@
 
   let listing = $state<ListingInput | null>(null);
   let eventId = $state<string | null>(null);
-  let deleted = $state(false);
+  let listingCreatedAt = $state(0);
+  // Only the seller's own deletions count (NIP-09). An address deletion hides
+  // versions published up to it, so a later republish shows again.
   let deletedEventIds = $state<string[]>([]);
+  let addressDeletedAt = $state(0);
+  let deleted = $derived(
+    eventId !== null && (deletedEventIds.includes(eventId) || listingCreatedAt <= addressDeletedAt)
+  );
   let seller = $state<NostrUser | null>(null);
   let relatedListings = $state<RelatedBrowseItem[]>([]);
   let showContactModal = $state(false);
@@ -72,6 +78,7 @@
       if (cancelled || !cached || listing) return;
       listing = cached.listing;
       eventId = cached.eventId;
+      listingCreatedAt = cached.created_at;
     });
 
     const relays = getActiveRelays();
@@ -95,17 +102,18 @@
       if (!latest) return;
       listing = parseListingEvent(latest);
       eventId = latest.id;
-      deleted = deletedEventIds.includes(latest.id);
+      listingCreatedAt = latest.created_at;
     });
 
     const deleteSubscription = relayPool
-      .subscription(getActiveRelays(), { kinds: [5], '#a': [address] })
+      .subscription(getActiveRelays(), { kinds: [5], authors: [data.pubkey], '#a': [address] })
       .subscribe((response: any) => {
         if (response === 'EOSE' || cancelled) return;
+        // Relays should honour the authors filter, but don't rely on it.
+        if (response.pubkey !== data.pubkey) return;
         if (!getDeletedAddresses(response).includes(address)) return;
-        const deletedIds = getDeletedEventIds(response);
-        deletedEventIds = [...new Set([...deletedEventIds, ...deletedIds])];
-        deleted = true;
+        deletedEventIds = [...new Set([...deletedEventIds, ...getDeletedEventIds(response)])];
+        addressDeletedAt = Math.max(addressDeletedAt, response.created_at);
       });
 
     loadNostrUser(data.pubkey).then((user) => {

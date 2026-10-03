@@ -3,36 +3,40 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BrowseItem } from './browseCounts';
 
 const storeItems = new Map<string, BrowseItem>();
-const deletedEventIds = new Set<string>();
+const deletionKeys = new Set<string>();
 
 function getItemKey(item: BrowseItem): string {
   return `${item.pubkey}:${item.listing.id}`;
 }
 
+function itemDeletionKey(item: BrowseItem): string {
+  return `${item.pubkey}:${item.eventId}`;
+}
+
 function resetStore() {
   storeItems.clear();
-  deletedEventIds.clear();
+  deletionKeys.clear();
 }
 
 vi.mock('./browseCacheStore', () => ({
   loadBrowseCacheStore: async () => ({
-    items: Array.from(storeItems.values()).filter((item) => !deletedEventIds.has(item.eventId)),
-    deletedEventIds: Array.from(deletedEventIds)
+    items: Array.from(storeItems.values()).filter((item) => !deletionKeys.has(itemDeletionKey(item))),
+    deletionKeys: Array.from(deletionKeys)
   }),
-  loadBrowseDeletedEventIds: async () => Array.from(deletedEventIds),
+  loadBrowseDeletionKeys: async () => Array.from(deletionKeys),
   loadLegacyBrowseCacheStore: async () => ({ items: [], deletedEventIds: [] }),
   pruneBrowseCacheStore: async () => undefined,
   upsertBrowseItems: async (items: BrowseItem[]) => {
     for (const item of items) {
       storeItems.set(getItemKey(item), item);
-      deletedEventIds.delete(item.eventId);
+      deletionKeys.delete(itemDeletionKey(item));
     }
   },
-  recordBrowseDeletions: async (eventIds: string[]) => {
-    for (const eventId of eventIds) {
-      deletedEventIds.add(eventId);
+  recordBrowseDeletions: async (keys: string[]) => {
+    for (const key of keys) {
+      deletionKeys.add(key);
       for (const [itemKey, item] of storeItems.entries()) {
-        if (item.eventId === eventId) {
+        if (itemDeletionKey(item) === key) {
           storeItems.delete(itemKey);
         }
       }
@@ -40,14 +44,14 @@ vi.mock('./browseCacheStore', () => ({
   },
   getBrowseItemFromStore: async (pubkey: string, listingId: string) => {
     const item = storeItems.get(`${pubkey}:${listingId}`);
-    if (!item || deletedEventIds.has(item.eventId)) {
+    if (!item || deletionKeys.has(itemDeletionKey(item))) {
       return null;
     }
     return item;
   },
   queryBrowseCacheKeys: async () => Array.from(storeItems.keys()),
   queryHybridBrowseItems: async (filters: { categories?: string[]; geohashPrefix?: string }) => Array.from(storeItems.values())
-    .filter((item) => !deletedEventIds.has(item.eventId))
+    .filter((item) => !deletionKeys.has(itemDeletionKey(item)))
     .filter((item) => !filters.categories?.length || filters.categories.every((category) => item.listing.categories.includes(category)))
     .filter((item) => !filters.geohashPrefix || filters.geohashPrefix.startsWith(item.listing.geohash ?? '')),
   resetBrowseCacheStoreForTests: () => resetStore()
@@ -61,7 +65,7 @@ import {
   loadBrowseCache,
   loadBrowseCacheSnapshot,
   mergeBrowseCaches,
-  normalizeDeletedEventIds,
+  normalizeDeletionKeys,
   queryBrowseCache,
   resetBrowseCacheMemoryForTests
 } from './browseCache';
@@ -96,7 +100,7 @@ describe('browse cache', () => {
   });
 
   it('starts empty when nothing has been cached', async () => {
-    expect(await loadBrowseCache()).toEqual({ items: [], deletedEventIds: [], updatedAt: 0 });
+    expect(await loadBrowseCache()).toEqual({ items: [], deletionKeys: [], updatedAt: 0 });
   });
 
   it('stores and reloads browse items', async () => {
@@ -104,7 +108,7 @@ describe('browse cache', () => {
     const cache = await loadBrowseCache();
 
     expect(cache.items).toEqual([sampleItem]);
-    expect(cache.deletedEventIds).toEqual([]);
+    expect(cache.deletionKeys).toEqual([]);
     expect(cache.updatedAt).toBeGreaterThan(0);
 
     flushBrowseCacheSnapshot();
@@ -120,13 +124,20 @@ describe('browse cache', () => {
     expect(cache.items[0].created_at).toBe(sampleItem.created_at + 10);
   });
 
-  it('removes cached items when deletions are recorded', async () => {
+  it('removes cached items when their author deletes them', async () => {
     await cacheBrowseItem(sampleItem);
-    await cacheBrowseDeletions(['event-1']);
+    await cacheBrowseDeletions([`${sampleItem.pubkey}:event-1`]);
 
     const cache = await loadBrowseCache();
     expect(cache.items).toEqual([]);
-    expect(cache.deletedEventIds).toContain('event-1');
+    expect(cache.deletionKeys).toContain(`${sampleItem.pubkey}:event-1`);
+  });
+
+  it('ignores deletions of a listing issued by someone else', async () => {
+    await cacheBrowseItem(sampleItem);
+    await cacheBrowseDeletions(['someone-else:event-1']);
+
+    expect((await loadBrowseCache()).items).toEqual([sampleItem]);
   });
 
   it('queries browse items by indexed category and geohash', async () => {
@@ -153,26 +164,30 @@ describe('browse cache', () => {
 
   it('merges local snapshot and indexeddb cache', () => {
     const merged = mergeBrowseCaches(
-      { items: [sampleItem], deletedEventIds: ['old-event'], updatedAt: 1 },
+      { items: [sampleItem], deletionKeys: ['author:old-event'], updatedAt: 1 },
       {
         items: [{ ...sampleItem, created_at: sampleItem.created_at + 20 }],
-        deletedEventIds: ['new-event'],
+        deletionKeys: ['author:new-event'],
         updatedAt: 2
       }
     );
 
     expect(merged.items).toHaveLength(1);
     expect(merged.items[0].created_at).toBe(sampleItem.created_at + 20);
-    expect(merged.deletedEventIds).toEqual(expect.arrayContaining(['new-event', 'old-event']));
+    expect(merged.deletionKeys).toEqual(expect.arrayContaining(['author:new-event', 'author:old-event']));
     expect(merged.updatedAt).toBe(2);
   });
 
-  it('keeps the newest deleted ids when over the cap', () => {
-    const ids = Array.from({ length: 600 }, (_, index) => `event-${index}`);
-    const normalized = normalizeDeletedEventIds(ids);
+  it('keeps the newest deletion keys when over the cap', () => {
+    const keys = Array.from({ length: 600 }, (_, index) => `author:event-${index}`);
+    const normalized = normalizeDeletionKeys(keys);
     expect(normalized).toHaveLength(500);
-    expect(normalized[0]).toBe('event-100');
-    expect(normalized.at(-1)).toBe('event-599');
+    expect(normalized[0]).toBe('author:event-100');
+    expect(normalized.at(-1)).toBe('author:event-599');
+  });
+
+  it('drops bare event ids recorded before deletions carried their author', () => {
+    expect(normalizeDeletionKeys(['legacy-event-id', 'author:event-1'])).toEqual(['author:event-1']);
   });
 
   it('keeps the newest version when a batch repeats a listing', async () => {

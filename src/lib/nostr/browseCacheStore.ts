@@ -12,6 +12,7 @@ import type { BrowseItem } from './browseCounts';
 import type { BrowseQueryFilters } from './browseCache';
 import type { SellerReview } from './reviews';
 import { decodeGeohash, distanceKm } from './geohash';
+import { deletionKey, isDeletionKey } from './deletions';
 
 /** Shared graph nodes are reference-owned: removing a listing never removes them. */
 export const BROWSE_EDGE = {
@@ -55,6 +56,9 @@ interface ListingNodeData {
 }
 
 interface TombstoneNodeData {
+  /** `${pubkey}:${eventId}`, see deletionKey(). */
+  key: string;
+  pubkey: string;
   eventId: string;
 }
 
@@ -228,6 +232,7 @@ async function getGraph(): Promise<PolyGraph> {
       instance.defineIndex({ name: 'listing-created-at', nodeType: LISTING_NODE_TYPE, fields: ['created_at'] });
       // Vectors from another provider are left in place and ignored at query
       // time; reindexBrowseEmbeddings() upgrades them when a provider loads.
+      await removeUnverifiableTombstones(instance);
       graph = instance;
       return instance;
     })();
@@ -240,9 +245,25 @@ function itemFromNode(node: PolyNode): BrowseItem | null {
   return data.item && typeof data.item === 'object' ? data.item : null;
 }
 
-function tombstoneEventId(node: PolyNode): string | null {
+function tombstoneKey(node: PolyNode): string | null {
   const data = node.data as Partial<TombstoneNodeData>;
-  return typeof data.eventId === 'string' ? data.eventId : null;
+  return isDeletionKey(data.key) ? data.key : null;
+}
+
+function tombstoneNodeId(key: string): string {
+  return `deleted-event:${key}`;
+}
+
+/** Tombstones from before deletions carried their author can't be verified. */
+async function removeUnverifiableTombstones(instance: PolyGraph): Promise<void> {
+  const nodes = await instance.queryPersisted().whereNodeType(TOMBSTONE_NODE_TYPE).toArray();
+  const legacyIds = nodes.filter((node) => tombstoneKey(node) === null).map((node) => node.id);
+  if (legacyIds.length === 0) return;
+  for (const id of legacyIds) await instance.getNodeSafe(id);
+  await instance.transaction((tx) => {
+    for (const id of legacyIds) tx.removeNode(id);
+  });
+  await instance.flush();
 }
 
 function reviewFromNode(node: PolyNode): SellerReview | null {
@@ -303,32 +324,32 @@ function addListingRelations(target: GraphMutator, item: BrowseItem) {
   } satisfies PolyEdge);
 }
 
-/** Deleted event ids ordered oldest to newest. */
-function tombstoneEventIds(nodes: PolyNode[]): string[] {
+/** Deletion keys ordered oldest to newest. */
+function tombstoneKeys(nodes: PolyNode[]): string[] {
   return nodes
     .sort((a, b) => a.updatedAt - b.updatedAt)
-    .map(tombstoneEventId)
-    .filter((eventId): eventId is string => eventId !== null);
+    .map(tombstoneKey)
+    .filter((key): key is string => key !== null);
 }
 
-/** Deleted event ids (oldest to newest) without loading any listing nodes. */
-export async function loadBrowseDeletedEventIds(): Promise<string[]> {
+/** Deletion keys (oldest to newest) without loading any listing nodes. */
+export async function loadBrowseDeletionKeys(): Promise<string[]> {
   const instance = await getGraph();
-  return tombstoneEventIds(await instance.queryPersisted().whereNodeType(TOMBSTONE_NODE_TYPE).toArray());
+  return tombstoneKeys(await instance.queryPersisted().whereNodeType(TOMBSTONE_NODE_TYPE).toArray());
 }
 
-export async function loadBrowseCacheStore(): Promise<{ items: BrowseItem[]; deletedEventIds: string[] }> {
+export async function loadBrowseCacheStore(): Promise<{ items: BrowseItem[]; deletionKeys: string[] }> {
   const instance = await getGraph();
   const [listingNodes, tombstoneNodes] = await Promise.all([
     instance.queryPersisted().whereNodeType(LISTING_NODE_TYPE).toArray(),
     instance.queryPersisted().whereNodeType(TOMBSTONE_NODE_TYPE).toArray()
   ]);
-  const deletedEventIds = tombstoneEventIds(tombstoneNodes);
-  const deleted = new Set(deletedEventIds);
+  const deletionKeys = tombstoneKeys(tombstoneNodes);
+  const deleted = new Set(deletionKeys);
   const items = listingNodes
     .map(itemFromNode)
-    .filter((item): item is BrowseItem => item !== null && !deleted.has(item.eventId));
-  return { items, deletedEventIds };
+    .filter((item): item is BrowseItem => item !== null && !deleted.has(deletionKey(item.pubkey, item.eventId)));
+  return { items, deletionKeys };
 }
 
 /** Read the v1 Dexie stores without retaining Dexie as a runtime dependency. */
@@ -437,30 +458,37 @@ export async function upsertBrowseItems(items: BrowseItem[]): Promise<void> {
   });
 }
 
-export async function recordBrowseDeletions(eventIds: string[]): Promise<void> {
-  const ids = Array.from(new Set(eventIds.filter((eventId) => typeof eventId === 'string' && eventId.length > 0)));
-  if (ids.length === 0) return;
+/** Record deletions by deletionKey(); a listing is only removed when its author issued the deletion. */
+export async function recordBrowseDeletions(keys: string[]): Promise<void> {
+  const deletions = Array.from(new Set(keys.filter(isDeletionKey)));
+  if (deletions.length === 0) return;
   await enqueueWrite(async () => {
     const instance = await getGraph();
     const removedIds = new Set<string>();
-    for (const eventId of ids) {
+    for (const key of deletions) {
+      const separator = key.indexOf(':');
+      const pubkey = key.slice(0, separator);
+      const eventId = key.slice(separator + 1);
       // Served by the listing-event-id index instead of scanning every listing.
-      const matches = await instance.queryPersisted().whereNodeType(LISTING_NODE_TYPE).where('eventId', eventId).ids();
-      for (const id of matches) removedIds.add(id);
+      const matches = await instance.queryPersisted().whereNodeType(LISTING_NODE_TYPE).where('eventId', eventId).toArray();
+      for (const node of matches) {
+        if ((node.data as Partial<ListingNodeData>).pubkey === pubkey) removedIds.add(node.id);
+      }
     }
     const newTombstones: string[] = [];
-    for (const eventId of ids) {
-      if (!(await instance.getNodeSafe(`deleted-event:${eventId}`))) newTombstones.push(eventId);
+    for (const key of deletions) {
+      if (!(await instance.getNodeSafe(tombstoneNodeId(key)))) newTombstones.push(key);
     }
     if (removedIds.size === 0 && newTombstones.length === 0) return;
     for (const id of removedIds) await instance.getNodeSafe(id);
     await instance.transaction((tx) => {
       for (const id of removedIds) tx.removeNode(id);
-      for (const eventId of newTombstones) {
+      for (const key of newTombstones) {
+        const separator = key.indexOf(':');
         tx.addNode({
-          id: `deleted-event:${eventId}`,
+          id: tombstoneNodeId(key),
           type: TOMBSTONE_NODE_TYPE,
-          data: { eventId },
+          data: { key, pubkey: key.slice(0, separator), eventId: key.slice(separator + 1) } satisfies TombstoneNodeData,
           insertedAt: Date.now(),
           updatedAt: Date.now()
         });
@@ -477,7 +505,7 @@ export async function getBrowseItemFromStore(pubkey: string, listingId: string):
   if (!node || node.type !== LISTING_NODE_TYPE) return null;
   const item = itemFromNode(node);
   if (!item) return null;
-  return (await instance.getNodeSafe(`deleted-event:${item.eventId}`)) ? null : item;
+  return (await instance.getNodeSafe(tombstoneNodeId(deletionKey(item.pubkey, item.eventId)))) ? null : item;
 }
 
 function relationTargetIds(filters: BrowseQueryFilters, categoryScope?: string): Map<string, Set<string>> {
