@@ -46,7 +46,7 @@ export function buildListingEvent(input: ListingInput, draft: boolean): EventTem
     ['d', input.id],
     ['title', input.title],
     ['summary', input.summary],
-    ['price', input.price.amount, input.price.currency]
+    ['price', String(input.price.amount ?? ''), String(input.price.currency ?? '')]
   ];
 
   if (input.location) tags.push(['location', input.location]);

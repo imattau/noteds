@@ -196,7 +196,8 @@
       id: initial?.id ?? crypto.randomUUID(),
       title,
       summary,
-      price: { amount: priceAmount, currency: priceCurrency },
+      // type="number" binds a number (or null when empty); tags must be strings.
+      price: { amount: String(priceAmount ?? '').trim(), currency: priceCurrency },
       ...(location ? { location } : {}),
       ...(geohash ? { geohash } : {}),
       categories,

@@ -109,3 +109,19 @@ describe('parseListingEvent', () => {
     expect(parseListingEvent(fullEvent).status).toBe('active');
   });
 });
+
+describe('buildListingEvent price tag', () => {
+  it('emits string tag values even when the form supplies a number', () => {
+    const input = { ...fullInput, price: { amount: 250 as unknown as string, currency: 'USD' } };
+    const event = buildListingEvent(input, false);
+    const price = event.tags.find(([tag]) => tag === 'price');
+    expect(price).toEqual(['price', '250', 'USD']);
+    expect(event.tags.every((tag) => tag.every((value) => typeof value === 'string'))).toBe(true);
+  });
+
+  it('emits an empty string when the amount is null', () => {
+    const input = { ...fullInput, price: { amount: null as unknown as string, currency: 'USD' } };
+    const price = buildListingEvent(input, false).tags.find(([tag]) => tag === 'price');
+    expect(price).toEqual(['price', '', 'USD']);
+  });
+});
