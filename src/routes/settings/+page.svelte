@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { nip19 } from 'nostr-tools';
   import { page } from '$app/state';
+  import { base } from '$app/paths';
   import { completeAmberSession, completePasskeySession, logout, account } from '$lib/nostr/signer';
   import {
     hasStoredPasskeyIdentity,
@@ -9,6 +10,8 @@
     registerPasskeyIdentityForApp,
     unlockPasskeyIdentityForApp
   } from '$lib/nostr/passkeyIdentity';
+  import { loadSellerReviews } from '$lib/nostr/reviews';
+  import { reputationFromReviews, type SellerReputation } from '$lib/nostr/browseCacheStore';
   import { isTauriApp } from '$lib/platform';
   import { sanitizeRelayUrl } from '$lib/nostr/security';
   import {
@@ -40,6 +43,26 @@
   function refreshPreferences() {
     relays = getCustomRelays();
     blossomServers = getCustomBlossomServers();
+  }
+
+  let reputation = $state<SellerReputation | null>(null);
+  let reputationLoading = $state(false);
+  let reputationError = $state(false);
+  let reputationPubkey: string | null = null;
+
+  async function loadReputation(pubkey: string) {
+    if (reputationPubkey === pubkey) return;
+    reputationPubkey = pubkey;
+    reputationLoading = true;
+    reputationError = false;
+    try {
+      const reviews = await loadSellerReviews(pubkey);
+      if (reputationPubkey === pubkey) reputation = reputationFromReviews(reviews);
+    } catch {
+      if (reputationPubkey === pubkey) reputationError = true;
+    } finally {
+      if (reputationPubkey === pubkey) reputationLoading = false;
+    }
   }
 
   let passkeyBtn = $state<HTMLButtonElement | null>(null);
@@ -145,6 +168,10 @@
     const unsub = account.subscribe((acc) => {
       if (acc?.pubkey) {
         void refreshFromNostrIfNeeded(acc.pubkey);
+        void loadReputation(acc.pubkey);
+      } else {
+        reputationPubkey = null;
+        reputation = null;
       }
     });
 
@@ -168,6 +195,32 @@
         <p class="truncate text-sm font-medium text-slate-900">{$account.metadata?.name || $account.metadata?.display_name || $account.npub}</p>
         <p class="break-all text-xs text-slate-500">{nip19.npubEncode($account.pubkey)}</p>
       </div>
+    </div>
+    <div class="mt-3 rounded-md bg-slate-50 p-3" aria-live="polite">
+      <p class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Your seller rating</p>
+      {#if reputationLoading}
+        <p class="mt-1 text-sm text-slate-500">Loading rating…</p>
+      {:else if reputationError}
+        <p class="mt-1 text-sm text-red-600">Could not load your rating.</p>
+      {:else if reputation && reputation.count > 0}
+        <p class="mt-1 text-sm text-slate-900">
+          <span class="font-semibold">{reputation.averageRating.toFixed(1)} / 5</span>
+          from {reputation.count} {reputation.count === 1 ? 'review' : 'reviews'}
+        </p>
+        <ul class="mt-1 text-xs text-slate-500">
+          {#each [5, 4, 3, 2, 1] as star (star)}
+            <li>{star}★ · {reputation.distribution[star as 1 | 2 | 3 | 4 | 5]}</li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="mt-1 text-sm text-slate-500">No reviews yet.</p>
+      {/if}
+      <a
+        href={`${base}/profile/${nip19.npubEncode($account.pubkey)}`}
+        class="mt-2 inline-block text-sm font-medium text-slate-700 underline hover:text-slate-900"
+      >
+        View my public profile and reviews
+      </a>
     </div>
     <button
       type="button"

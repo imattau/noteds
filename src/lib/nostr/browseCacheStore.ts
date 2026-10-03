@@ -759,7 +759,7 @@ export async function queryBrowseReviewsBySeller(sellerPubkey: string): Promise<
   return nodes.map(reviewFromNode).filter((review): review is SellerReview => review !== null);
 }
 
-function reputationFromReviews(reviews: SellerReview[]): SellerReputation {
+export function reputationFromReviews(reviews: SellerReview[]): SellerReputation {
   const distribution: SellerReputation['distribution'] = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
   for (const review of reviews) distribution[review.rating as 1 | 2 | 3 | 4 | 5] += 1;
   return {
