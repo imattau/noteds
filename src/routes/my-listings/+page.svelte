@@ -4,20 +4,18 @@
   import { base } from '$app/paths';
   import AuthGate from '$components/AuthGate.svelte';
   import { account, signer } from '$lib/nostr/signer';
-  import { eventStore, relayPool } from '$lib/nostr/runtime';
+  import { relayPool } from '$lib/nostr/runtime';
   import { getActiveRelays } from '$lib/nostr/relays';
-  import { buildListingEvent, parseListingEvent, type ListingInput } from '$lib/nostr/listings';
+  import { buildListingEvent, type ListingInput } from '$lib/nostr/listings';
   import { deleteDraft, saveDraft } from '$lib/nostr/drafts';
-  import type { NostrEvent } from 'nostr-tools';
   import {
     loadOwnedListingIds,
-    OWNED_LISTINGS_LOAD_TIMEOUT_MS,
     removeOwnedListingId,
     replaceOwnedListingIds,
     upsertOwnedListingId,
     getCachedOwnedListingIds
   } from '$lib/nostr/ownedListings';
-  import { collectEvents } from '$lib/nostr/requestEvents';
+  import { fetchAuthoredListings } from '$lib/nostr/authoredListings';
   import { getCachedBrowseItem } from '$lib/nostr/browseCache';
 
   interface OwnedListing {
@@ -29,32 +27,6 @@
   let listings = $state<OwnedListing[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
-
-  async function loadAuthoredListings(pubkey: string): Promise<OwnedListing[]> {
-    const events = await collectEvents(
-      relayPool.request(getActiveRelays(), { kinds: [30402], authors: [pubkey] }),
-      OWNED_LISTINGS_LOAD_TIMEOUT_MS
-    );
-
-    const dTagValues = new Set<string>();
-    for (const event of events) {
-      dTagValues.add(parseListingEvent(event).id);
-      eventStore.add(event);
-    }
-
-    const result: OwnedListing[] = [];
-    for (const dTagValue of dTagValues) {
-      const canonical = eventStore.getReplaceable(30402, pubkey, dTagValue);
-      if (!canonical) continue;
-      result.push({
-        listing: parseListingEvent(canonical),
-        created_at: canonical.created_at,
-        eventId: canonical.id
-      });
-    }
-
-    return result.sort((a, b) => b.created_at - a.created_at);
-  }
 
   async function reloadListings(pubkey: string) {
     // 1. Try to load cached listings first to prevent loading flicker
@@ -83,10 +55,16 @@
     }
     error = null;
 
+    // Fetch the owned index and the user's listings together. The authored
+    // query returns every listing the index can name, so once both settle no
+    // follow-up request is needed.
+    const authoredPromise = fetchAuthoredListings(pubkey);
+    authoredPromise.catch(() => undefined); // Unused when the index is empty.
+
     try {
       const ownedIds = await loadOwnedListingIds(pubkey);
       if (ownedIds === null) {
-        const authored = await loadAuthoredListings(pubkey);
+        const authored = await authoredPromise;
         listings = authored;
         if (authored.length > 0) {
           await replaceOwnedListingIds(
@@ -121,28 +99,12 @@
         loading = false;
       }
 
-      const events = await collectEvents(
-        relayPool.request(getActiveRelays(), {
-          kinds: [30402],
-          authors: [pubkey],
-          '#d': ownedIds
-        }),
-        OWNED_LISTINGS_LOAD_TIMEOUT_MS
-      );
-
-      for (const event of events) {
-        eventStore.add(event);
-      }
-
+      const authoredById = new Map((await authoredPromise).map((item) => [item.listing.id, item]));
       const result: OwnedListing[] = [];
       for (const dTagValue of ownedSet) {
-        const canonical = eventStore.getReplaceable(30402, pubkey, dTagValue);
-        if (canonical) {
-          result.push({
-            listing: parseListingEvent(canonical),
-            created_at: canonical.created_at,
-            eventId: canonical.id
-          });
+        const fetched = authoredById.get(dTagValue);
+        if (fetched) {
+          result.push(fetched);
         } else {
           const cached = freshCachedResult.find((item) => item.listing.id === dTagValue) || cachedResult.find((item) => item.listing.id === dTagValue);
           if (cached) {

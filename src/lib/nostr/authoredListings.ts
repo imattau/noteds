@@ -13,18 +13,11 @@ export interface AuthoredListing {
   eventId: string;
 }
 
-export async function loadAuthoredListings(pubkey: string): Promise<AuthoredListing[]> {
-  let cached: AuthoredListing[] = [];
-  try {
-    cached = (await queryBrowseItemsBySeller(pubkey)).map((item) => ({
-      listing: item.listing,
-      created_at: item.created_at,
-      eventId: item.eventId
-    }));
-  } catch {
-    // Relay data remains the source of truth when local graph storage is unavailable.
-  }
-
+/**
+ * Relay-only fetch of every listing the pubkey has published, canonicalised to
+ * the newest version of each. Results are also written to the browse cache.
+ */
+export async function fetchAuthoredListings(pubkey: string): Promise<AuthoredListing[]> {
   const events = await collectEvents(
     relayPool.request(getActiveRelays(), {
       kinds: [30402],
@@ -60,7 +53,24 @@ export async function loadAuthoredListings(pubkey: string): Promise<AuthoredList
         eventId: item.eventId
       }))
     );
-    return sorted;
   }
+  return sorted;
+}
+
+/** Authored listings from relays, falling back to the local graph cache when relays return none. */
+export async function loadAuthoredListings(pubkey: string): Promise<AuthoredListing[]> {
+  let cached: AuthoredListing[] = [];
+  try {
+    cached = (await queryBrowseItemsBySeller(pubkey)).map((item) => ({
+      listing: item.listing,
+      created_at: item.created_at,
+      eventId: item.eventId
+    }));
+  } catch {
+    // Relay data remains the source of truth when local graph storage is unavailable.
+  }
+
+  const fetched = await fetchAuthoredListings(pubkey);
+  if (fetched.length > 0) return fetched;
   return cached.sort((a, b) => b.created_at - a.created_at);
 }
