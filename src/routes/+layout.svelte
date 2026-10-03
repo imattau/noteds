@@ -20,8 +20,11 @@
    * Warm the semantic search model once the browser is idle, so it is ready
    * for the first search without competing with first paint and relay fetches.
    * A keyword search before then loads it on demand; either way it loads once.
+   * Skipped on Android: loading the model and embedding every cached listing at
+   * launch slowed the whole device, so there it waits for the first search.
    */
   function scheduleSemanticSearchWarmup(): () => void {
+    if (isTauriApp) return () => {};
     const warm = () => {
       void import('$lib/nostr/browserEmbedding').then(({ ensureBrowserSemanticSearch }) =>
         ensureBrowserSemanticSearch()

@@ -1,3 +1,4 @@
+import { isTauriApp } from '$lib/platform';
 import { reindexBrowseEmbeddings, setBrowseEmbeddingProvider, type BrowseEmbeddingProvider } from './browseCacheStore';
 
 export const DEFAULT_BROWSER_EMBEDDING_MODEL = 'onnx-community/all-MiniLM-L6-v2-ONNX';
@@ -100,9 +101,13 @@ export async function enableBrowserSemanticSearch(options: BrowserEmbeddingOptio
     return false;
   }
   const model = options.model ?? DEFAULT_BROWSER_EMBEDDING_MODEL;
+  // Android WebView GPU compute competes with the system compositor and makes
+  // the whole device sluggish, so the app build stays on WASM in the worker.
   const devices: Array<BrowserEmbeddingOptions['device']> = options.device
     ? [options.device]
-    : typeof navigator !== 'undefined' && 'gpu' in navigator && !isWebGpuKnownUnsupported(model)
+    : isTauriApp
+      ? ['wasm']
+      : typeof navigator !== 'undefined' && 'gpu' in navigator && !isWebGpuKnownUnsupported(model)
       ? ['webgpu', 'wasm']
       : ['wasm'];
   let lastError: unknown;
