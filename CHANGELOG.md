@@ -4,6 +4,13 @@ All notable changes to Noteds are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and each version's
 section is used as its release notes on GitHub and Zapstore.
 
+## [0.1.7] - 2026-10-03
+
+### Fixed
+- The Android app no longer slows down the whole device after launch. The
+  search model now loads on your first keyword search instead of at startup,
+  and runs on the CPU rather than the GPU.
+
 ## [0.1.6] - 2026-10-03
 
 ### Added
